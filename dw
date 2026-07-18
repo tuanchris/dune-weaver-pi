@@ -67,7 +67,7 @@ check_installed() {
         echo -e "${RED}Error: Dune Weaver not found${NC}"
         echo ""
         echo "Please install first:"
-        echo "  git clone https://github.com/tuanchris/dune-weaver --single-branch"
+        echo "  git clone https://github.com/tuanchris/dune-weaver-pi --single-branch"
         echo "  cd dune-weaver"
         echo "  dw install"
         exit 1
@@ -83,7 +83,7 @@ cmd_install() {
         else
             echo -e "${RED}Error: Run this from the dune-weaver directory${NC}"
             echo ""
-            echo "  git clone https://github.com/tuanchris/dune-weaver --single-branch"
+            echo "  git clone https://github.com/tuanchris/dune-weaver-pi --single-branch"
             echo "  cd dune-weaver"
             echo "  dw install"
             exit 1

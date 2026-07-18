@@ -2,7 +2,7 @@
 
 Thanks for your interest in contributing to Dune Weaver! Whether it's a bug fix, a new feature, or improved docs, every contribution helps make kinetic sand tables more accessible.
 
-If you have questions or ideas, join the [#dev channel on Discord](https://discord.com/channels/864079106424832021/1329553521032560791) or browse the existing [Issues](https://github.com/tuanchris/dune-weaver/issues).
+If you have questions or ideas, join the [#dev channel on Discord](https://discord.com/channels/864079106424832021/1329553521032560791) or browse the existing [Issues](https://github.com/tuanchris/dune-weaver-pi/issues).
 
 ## Development Setup
 
@@ -15,7 +15,7 @@ If you have questions or ideas, join the [#dev channel on Discord](https://disco
 ### Clone and install
 
 ```bash
-git clone https://github.com/tuanchris/dune-weaver.git
+git clone https://github.com/tuanchris/dune-weaver-pi.git
 cd dune-weaver
 
 # Python dependencies (use nonrpi on a dev machine, full requirements.txt on a Raspberry Pi)

@@ -3,10 +3,10 @@
 # Dune Weaver Raspberry Pi Setup Script
 #
 # ONE-COMMAND INSTALL (recommended):
-#   curl -fsSL https://raw.githubusercontent.com/tuanchris/dune-weaver/main/setup-pi.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/tuanchris/dune-weaver-pi/main/setup-pi.sh | bash
 #
 # OR from existing clone:
-#   git clone https://github.com/tuanchris/dune-weaver --single-branch
+#   git clone https://github.com/tuanchris/dune-weaver-pi --single-branch
 #   cd dune-weaver
 #   bash setup-pi.sh
 #
@@ -35,7 +35,7 @@ if [[ "$REAL_HOME" == "~$REAL_USER" ]]; then
     REAL_HOME="$(grep "^$REAL_USER:" /etc/passwd | cut -d: -f6)"
 fi
 INSTALL_DIR="$REAL_HOME/dune-weaver"
-REPO_URL="https://github.com/tuanchris/dune-weaver"
+REPO_URL="https://github.com/tuanchris/dune-weaver-pi"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -52,7 +52,7 @@ while [[ $# -gt 0 ]]; do
             echo "Dune Weaver Raspberry Pi Setup Script"
             echo ""
             echo "One-command install:"
-            echo "  curl -fsSL https://raw.githubusercontent.com/tuanchris/dune-weaver/main/setup-pi.sh | bash"
+            echo "  curl -fsSL https://raw.githubusercontent.com/tuanchris/dune-weaver-pi/main/setup-pi.sh | bash"
             echo ""
             echo "Or from existing clone:"
             echo "  cd ~/dune-weaver && bash setup-pi.sh [OPTIONS]"

@@ -2491,7 +2491,7 @@ export function SettingsPage() {
                     <>
                       {' · latest '}
                       <a
-                        href={`https://github.com/tuanchris/dune-weaver/releases/tag/v${versionInfo.latest}`}
+                        href={`https://github.com/tuanchris/dune-weaver-pi/releases/tag/v${versionInfo.latest}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="font-mono underline underline-offset-2 hover:opacity-80 transition-opacity"
