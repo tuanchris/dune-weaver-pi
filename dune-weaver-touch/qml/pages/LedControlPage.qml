@@ -17,6 +17,7 @@ Page {
     property int currentEffectIndex: 0
     property int currentPaletteIndex: 0
     property string ledColor: "#ffffff"
+    property int ledSpeed: 128
     property var effectsList: []
     property var palettesList: []
 
@@ -74,6 +75,59 @@ Page {
         {"name": "Pink", "color": "#c45c99", "sendColor": "#ff00ff"}
     ]
 
+    // Preset send-hex list for the colour pickers
+    readonly property var presetSendColors: {
+        var a = []
+        for (var i = 0; i < presetColors.length; i++)
+            a.push(presetColors[i].sendColor)
+        return a
+    }
+
+    // Which inputs each firmware effect actually uses, keyed by raw effect
+    // name. Mirrors the mobile/web app's EFFECT_INPUTS table so the touch page
+    // shows/hides the same controls per effect. Effects absent from the map
+    // fall back to showing everything.
+    readonly property var effectInputs: ({
+        "off": {}, "static": {"color": true}, "rainbow": {"palette": true},
+        "breathe": {"color": true}, "colorloop": {"palette": true},
+        "theater": {"color": true}, "scan": {"color": true},
+        "running": {"color": true}, "sine": {"color": true},
+        "gradient": {"color": true, "color2": true}, "sinelon": {"palette": true},
+        "twinkle": {"palette": true}, "sparkle": {"color": true},
+        "fire": {"palette": true}, "candle": {"color": true},
+        "meteor": {"color": true}, "bouncing": {"color": true},
+        "wipe": {"color": true, "color2": true},
+        "dualscan": {"color": true, "color2": true}, "juggle": {"palette": true},
+        "multicomet": {"palette": true}, "glitter": {"palette": true},
+        "dissolve": {"color": true, "color2": true}, "ripple": {"palette": true},
+        "drip": {"color": true}, "lightning": {}, "fireworks": {"palette": true},
+        "plasma": {"palette": true}, "heartbeat": {"color": true},
+        "strobe": {"color": true}, "police": {},
+        "chase": {"color": true, "color2": true},
+        "railway": {"color": true, "color2": true}, "pacifica": {}, "aurora": {},
+        "pride": {}, "colorwaves": {"palette": true}, "bpm": {"palette": true},
+        "ball": {"color": true, "color2": true}
+    })
+
+    // Raw name of the currently selected effect (matches by id).
+    property string currentEffectName: {
+        for (var i = 0; i < effectsList.length; i++)
+            if (effectsList[i].id === currentEffectIndex)
+                return effectsList[i].name
+        return ""
+    }
+    readonly property var currentInputs:
+        effectInputs[currentEffectName] !== undefined
+            ? effectInputs[currentEffectName]
+            : {"color": true, "color2": true, "palette": true}
+    readonly property bool showColor: !!currentInputs.color
+    readonly property bool showColor2: !!currentInputs.color2
+    readonly property bool showPalette: !!currentInputs.palette
+    // Speed is meaningful for any animating effect (not a solid or off).
+    readonly property bool showSpeed:
+        currentEffectName !== "" && currentEffectName !== "off"
+        && currentEffectName !== "static"
+
     // Backend signal connections
     Connections {
         target: backend
@@ -87,6 +141,7 @@ Page {
                 currentEffectIndex = backend.ledCurrentEffect
                 currentPaletteIndex = backend.ledCurrentPalette
                 ledColor = backend.ledColor
+                ledSpeed = backend.ledSpeed
                 ballColor2 = backend.ledColor2
                 ballFgBright = backend.ledBallFgBright
                 ballBgBright = backend.ledBallBgBright
@@ -158,9 +213,9 @@ Page {
             }
         }
 
-        // Content — the light's state stays pinned on the left (power and
-        // brightness never scroll away); the right column scrolls through
-        // every effect, the ball tracker, every palette, and quick colors.
+        // Content — the light's state and per-effect appearance (colours,
+        // palette, speed) live on the left; the right column scrolls through
+        // every effect and the ball tracker.
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -314,6 +369,173 @@ Page {
                     }
                 }
 
+                // Appearance — the colours, palette and speed the selected
+                // effect actually uses, shown/hidden per-effect like the mobile
+                // app. Hidden while the ball tracker owns the ring (it has its
+                // own controls on the right).
+                SettingsCard {
+                    Layout.rightMargin: hasRing ? Components.ThemeManager.spaceSm
+                                                : Components.ThemeManager.spaceLg
+                    Layout.preferredHeight: appearanceColumn.implicitHeight + 2 * Components.ThemeManager.spaceLg
+                    visible: hasRing && !ballActive && (showColor || showColor2 || showPalette || showSpeed)
+
+                    ColumnLayout {
+                        id: appearanceColumn
+                        anchors.fill: parent
+                        anchors.margins: Components.ThemeManager.spaceLg
+                        spacing: Components.ThemeManager.spaceMd
+
+                        SectionLabel {
+                            text: "Appearance"
+                        }
+
+                        // Colour(s) — one or two depending on the effect
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            visible: showColor || showColor2
+                            spacing: Components.ThemeManager.spaceSm
+
+                            Label {
+                                text: showColor2 ? "Colours" : "Colour"
+                                font.family: Components.ThemeManager.fontBody
+                                font.pixelSize: Components.ThemeManager.fontSizeCaption
+                                color: Components.ThemeManager.textSecondary
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: Components.ThemeManager.spaceXl
+
+                                ColumnLayout {
+                                    visible: showColor
+                                    spacing: 4
+                                    DwColorPicker {
+                                        Layout.preferredWidth: 48
+                                        Layout.preferredHeight: 48
+                                        selectedColor: ledColor
+                                        presets: presetSendColors
+                                        onColorCommitted: function(hex) {
+                                            if (backend) backend.setLedColorHex(hex)
+                                        }
+                                    }
+                                    Label {
+                                        text: showColor2 ? "Primary" : "Colour"
+                                        font.family: Components.ThemeManager.fontBody
+                                        font.pixelSize: Components.ThemeManager.fontSizeCaption
+                                        color: Components.ThemeManager.textTertiary
+                                        horizontalAlignment: Text.AlignHCenter
+                                        Layout.preferredWidth: 48
+                                    }
+                                }
+
+                                ColumnLayout {
+                                    visible: showColor2
+                                    spacing: 4
+                                    DwColorPicker {
+                                        Layout.preferredWidth: 48
+                                        Layout.preferredHeight: 48
+                                        selectedColor: ballColor2
+                                        presets: presetSendColors
+                                        onColorCommitted: function(hex) {
+                                            if (backend) backend.setLedColor2Hex(hex)
+                                        }
+                                    }
+                                    Label {
+                                        text: "Secondary"
+                                        font.family: Components.ThemeManager.fontBody
+                                        font.pixelSize: Components.ThemeManager.fontSizeCaption
+                                        color: Components.ThemeManager.textTertiary
+                                        horizontalAlignment: Text.AlignHCenter
+                                        Layout.preferredWidth: 48
+                                    }
+                                }
+
+                                Item { Layout.fillWidth: true }
+                            }
+                        }
+
+                        // Palette — only effects that colour from a palette
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            visible: showPalette
+                            spacing: Components.ThemeManager.spaceSm
+
+                            Label {
+                                text: "Palette"
+                                font.family: Components.ThemeManager.fontBody
+                                font.pixelSize: Components.ThemeManager.fontSizeCaption
+                                color: Components.ThemeManager.textSecondary
+                            }
+
+                            Label {
+                                visible: palettesList.length === 0
+                                text: "No palettes available"
+                                font.family: Components.ThemeManager.fontBody
+                                font.pixelSize: Components.ThemeManager.fontSizeCaption
+                                color: Components.ThemeManager.textSecondary
+                            }
+
+                            GridLayout {
+                                Layout.fillWidth: true
+                                columns: 3
+                                rowSpacing: Components.ThemeManager.spaceSm
+                                columnSpacing: Components.ThemeManager.spaceSm
+                                visible: palettesList.length > 0
+
+                                Repeater {
+                                    model: palettesList
+
+                                    ChoiceChip {
+                                        property int paletteId: modelData.id !== undefined ? modelData.id : index
+                                        property string paletteName: modelData.name || ("Palette " + paletteId)
+
+                                        Layout.fillWidth: true
+                                        label: paletteName.charAt(0).toUpperCase() + paletteName.slice(1)
+                                        selected: paletteId === currentPaletteIndex
+
+                                        onClicked: {
+                                            if (backend) {
+                                                backend.setLedPalette(paletteId)
+                                                currentPaletteIndex = paletteId
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Speed
+                        RowLayout {
+                            Layout.fillWidth: true
+                            visible: showSpeed
+                            spacing: Components.ThemeManager.spaceMd
+
+                            Label {
+                                text: "Speed"
+                                font.family: Components.ThemeManager.fontBody
+                                font.pixelSize: Components.ThemeManager.fontSizeCaption
+                                color: Components.ThemeManager.textSecondary
+                                Layout.preferredWidth: 84
+                            }
+                            DwSlider {
+                                id: speedSlider
+                                Layout.fillWidth: true
+                                from: 1; to: 255; stepSize: 1
+                                value: ledSpeed
+                                onMoved: { if (backend) backend.setLedSpeed(Math.round(value)) }
+                            }
+                            Label {
+                                text: Math.round(speedSlider.value)
+                                font.family: Components.ThemeManager.fontMedium
+                                font.pixelSize: Components.ThemeManager.fontSizeCaption
+                                color: Components.ThemeManager.textPrimary
+                                Layout.preferredWidth: 36
+                                horizontalAlignment: Text.AlignRight
+                            }
+                        }
+                    }
+                }
+
                 // Screen brightness (always visible, controls Pi LCD backlight)
                 SettingsCard {
                     Layout.rightMargin: hasRing ? Components.ThemeManager.spaceSm
@@ -367,55 +589,6 @@ Page {
                                 color: Components.ThemeManager.textPrimary
                                 Layout.preferredWidth: 36
                                 horizontalAlignment: Text.AlignRight
-                            }
-                        }
-                    }
-                }
-
-                // Quick colors — set the whole ring to one plain colour
-                SettingsCard {
-                    Layout.rightMargin: Components.ThemeManager.spaceSm
-                    Layout.preferredHeight: quickColumn.implicitHeight + 2 * Components.ThemeManager.spaceLg
-                    visible: hasRing
-
-                    ColumnLayout {
-                        id: quickColumn
-                        anchors.fill: parent
-                        anchors.margins: Components.ThemeManager.spaceLg
-                        spacing: Components.ThemeManager.spaceMd
-
-                        SectionLabel {
-                            text: "Quick colors"
-                        }
-
-                        GridLayout {
-                            Layout.fillWidth: true
-                            columns: 5
-                            rowSpacing: Components.ThemeManager.spaceSm
-                            columnSpacing: Components.ThemeManager.spaceSm
-
-                            Repeater {
-                                model: presetColors
-
-                                Rectangle {
-                                    property bool isSel: ledColor.toLowerCase() === modelData.sendColor.toLowerCase()
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: 40
-                                    radius: 20
-                                    color: modelData.color
-                                    border.color: isSel ? Components.ThemeManager.textPrimary
-                                                        : Qt.darker(modelData.color, 1.2)
-                                    border.width: isSel ? 2 : 1
-
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        onClicked: {
-                                            if (backend) {
-                                                backend.setLedColorHex(modelData.sendColor)
-                                            }
-                                        }
-                                    }
-                                }
                             }
                         }
                     }
@@ -492,6 +665,7 @@ Page {
                     // follows the sand ball, so it lives with the effects.
                     SettingsCard {
                         Layout.leftMargin: Components.ThemeManager.spaceSm
+                        Layout.bottomMargin: Components.ThemeManager.spaceLg
                         Layout.preferredHeight: ballCol.implicitHeight + 2 * Components.ThemeManager.spaceLg
 
                         ColumnLayout {
@@ -553,29 +727,25 @@ Page {
                                     color: Components.ThemeManager.textSecondary
                                 }
 
-                                // Blob colour swatches
-                                GridLayout {
+                                // Blob colour
+                                RowLayout {
                                     Layout.fillWidth: true
-                                    columns: 10
-                                    rowSpacing: Components.ThemeManager.spaceSm
-                                    columnSpacing: Components.ThemeManager.spaceSm
-                                    Repeater {
-                                        model: presetColors
-                                        Rectangle {
-                                            property bool isSel: ledColor.toLowerCase() === modelData.sendColor.toLowerCase()
-                                            Layout.fillWidth: true
-                                            Layout.preferredHeight: 32
-                                            radius: 16
-                                            color: modelData.color
-                                            border.color: isSel ? Components.ThemeManager.textPrimary
-                                                                : Qt.darker(modelData.color, 1.2)
-                                            border.width: isSel ? 2 : 1
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                onClicked: { if (backend) backend.setLedColorHex(modelData.sendColor) }
-                                            }
-                                        }
+                                    spacing: Components.ThemeManager.spaceMd
+                                    Label {
+                                        text: "Colour"
+                                        font.family: Components.ThemeManager.fontBody
+                                        font.pixelSize: Components.ThemeManager.fontSizeCaption
+                                        color: Components.ThemeManager.textSecondary
+                                        Layout.preferredWidth: 84
                                     }
+                                    DwColorPicker {
+                                        Layout.preferredWidth: 44
+                                        Layout.preferredHeight: 44
+                                        selectedColor: ledColor
+                                        presets: presetSendColors
+                                        onColorCommitted: function(hex) { if (backend) backend.setLedColorHex(hex) }
+                                    }
+                                    Item { Layout.fillWidth: true }
                                 }
 
                                 // Blob brightness
@@ -719,39 +889,25 @@ Page {
                                 }
 
                                 // Background colour (only for the solid background)
-                                ColumnLayout {
+                                RowLayout {
                                     Layout.fillWidth: true
                                     visible: ballBg === "static"
-                                    spacing: Components.ThemeManager.spaceSm
+                                    spacing: Components.ThemeManager.spaceMd
                                     Label {
-                                        text: "Background colour"
+                                        text: "Bg colour"
                                         font.family: Components.ThemeManager.fontBody
                                         font.pixelSize: Components.ThemeManager.fontSizeCaption
                                         color: Components.ThemeManager.textSecondary
+                                        Layout.preferredWidth: 84
                                     }
-                                    GridLayout {
-                                        Layout.fillWidth: true
-                                        columns: 10
-                                        rowSpacing: Components.ThemeManager.spaceSm
-                                        columnSpacing: Components.ThemeManager.spaceSm
-                                        Repeater {
-                                            model: presetColors
-                                            Rectangle {
-                                                property bool isSel: ballColor2.toLowerCase() === modelData.sendColor.toLowerCase()
-                                                Layout.fillWidth: true
-                                                Layout.preferredHeight: 32
-                                                radius: 16
-                                                color: modelData.color
-                                                border.color: isSel ? Components.ThemeManager.textPrimary
-                                                                    : Qt.darker(modelData.color, 1.2)
-                                                border.width: isSel ? 2 : 1
-                                                MouseArea {
-                                                    anchors.fill: parent
-                                                    onClicked: { if (backend) backend.setLedColor2Hex(modelData.sendColor) }
-                                                }
-                                            }
-                                        }
+                                    DwColorPicker {
+                                        Layout.preferredWidth: 44
+                                        Layout.preferredHeight: 44
+                                        selectedColor: ballColor2
+                                        presets: presetSendColors
+                                        onColorCommitted: function(hex) { if (backend) backend.setLedColor2Hex(hex) }
                                     }
+                                    Item { Layout.fillWidth: true }
                                 }
 
                                 // Background brightness (hidden when background is off)
@@ -786,59 +942,6 @@ Page {
                         }
                     }
 
-                    // Palettes — the full firmware catalogue
-                    SettingsCard {
-                        Layout.leftMargin: Components.ThemeManager.spaceSm
-                        Layout.bottomMargin: Components.ThemeManager.spaceLg
-                        Layout.preferredHeight: palettesColumn.implicitHeight + 2 * Components.ThemeManager.spaceLg
-
-                        ColumnLayout {
-                            id: palettesColumn
-                            anchors.fill: parent
-                            anchors.margins: Components.ThemeManager.spaceLg
-                            spacing: Components.ThemeManager.spaceMd
-
-                            SectionLabel {
-                                text: "Palette"
-                            }
-
-                            Label {
-                                visible: palettesList.length === 0
-                                text: "No palettes available"
-                                font.family: Components.ThemeManager.fontBody
-                                font.pixelSize: Components.ThemeManager.fontSizeCaption
-                                color: Components.ThemeManager.textSecondary
-                            }
-
-                            GridLayout {
-                                Layout.fillWidth: true
-                                columns: 3
-                                rowSpacing: Components.ThemeManager.spaceSm
-                                columnSpacing: Components.ThemeManager.spaceSm
-                                visible: palettesList.length > 0
-
-                                Repeater {
-                                    model: palettesList
-
-                                    ChoiceChip {
-                                        property int paletteId: modelData.id !== undefined ? modelData.id : index
-                                        property string paletteName: modelData.name || ("Palette " + paletteId)
-
-                                        Layout.fillWidth: true
-                                        label: paletteName.charAt(0).toUpperCase() + paletteName.slice(1)
-                                        selected: paletteId === currentPaletteIndex
-
-                                        onClicked: {
-                                            if (backend) {
-                                                backend.setLedPalette(paletteId)
-                                                currentPaletteIndex = paletteId
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
                 }
             }
         }

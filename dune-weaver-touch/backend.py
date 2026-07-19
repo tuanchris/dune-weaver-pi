@@ -179,6 +179,7 @@ class Backend(QObject):
         self._led_current_effect = 0
         self._led_current_palette = 0
         self._led_color = "#ffffff"
+        self._led_speed = 128             # animation speed (firmware 1..255)
         self._led_last_effect = 2         # remembered on power-off (default rainbow)
 
         # 'ball' tracker state (firmware-native effect id 38; the blob follows
@@ -1074,6 +1075,10 @@ class Backend(QObject):
     def ledColor(self):
         return self._led_color
 
+    @Property(int, notify=ledStatusChanged)
+    def ledSpeed(self):
+        return self._led_speed
+
     # -- 'ball' tracker properties (firmware effect id 38) -----------------
     @Property(str, notify=ledStatusChanged)
     def ledColor2(self):
@@ -1139,6 +1144,7 @@ class Backend(QObject):
                 self._led_brightness = round(int(settings.get("LED/Brightness", 255)) * 100 / 255)
             except (TypeError, ValueError):
                 self._led_brightness = 100
+            self._led_speed = _clamp_int(settings.get("LED/Speed"), 128, 1, 255)
             color = settings.get("LED/Color", "ffffff")
             self._led_color = f"#{color.lstrip('#')}"
 
@@ -1251,6 +1257,13 @@ class Backend(QObject):
                 self._led_last_non_ball_effect = effectId
             _run(self._apply_led(effect=name))
             self.ledStatusChanged.emit()
+
+    @Slot(int)
+    def setLedSpeed(self, value):
+        logger.debug(f"Setting LED speed: {value}")
+        self._led_speed = _clamp_int(value, 128, 1, 255)
+        _run(self._apply_led(speed=self._led_speed))
+        self.ledStatusChanged.emit()
 
     @Slot(int)
     def setLedPalette(self, paletteId):
