@@ -1232,6 +1232,46 @@ async def board_password(request: BoardPasswordRequest):
     state.save()
     return {"success": True}
 
+def _format_status_report(st: dict) -> str:
+    """Render a GRBL-style one-line status report from /sand_status.
+
+    `?` is GRBL's realtime status query, but this firmware's /command gateway
+    answers `?` with its help text, so the console synthesizes the report from
+    the status object (the board's real source of runtime state)."""
+    st = st or {}
+    parts = [(st.get("state") or "Unknown").split(":", 1)[0]]
+
+    theta, rho = st.get("theta"), st.get("rho")
+    if isinstance(theta, (int, float)) and isinstance(rho, (int, float)):
+        parts.append(f"Pos:θ={theta:.3f},ρ={rho:.3f}")
+
+    feed = st.get("feed")
+    if feed is not None:
+        parts.append(f"Feed:{feed}")
+
+    running = bool(st.get("running"))
+    if running:
+        prog = st.get("progress", -1)
+        if isinstance(prog, (int, float)) and prog >= 0:
+            parts.append(f"Progress:{round(prog * 100)}%")
+        raw_file = st.get("file") or ""
+        if raw_file:
+            parts.append(f"File:{raw_file.rsplit('/', 1)[-1]}")
+
+    pl = st.get("playlist") or {}
+    if pl.get("active"):
+        seg = f"Playlist:{pl.get('name') or '?'}"
+        idx, total = pl.get("index"), pl.get("total")
+        if isinstance(idx, int) and isinstance(total, int) and total:
+            seg += f"[{idx + 1}/{total}]"
+        parts.append(seg)
+        pause_remaining = pl.get("pause_remaining", -1)
+        if isinstance(pause_remaining, (int, float)) and pause_remaining >= 0:
+            parts.append(f"Pause:{int(pause_remaining)}s")
+
+    return "<" + "|".join(parts) + ">"
+
+
 @app.post("/api/board/command", tags=["settings"])
 async def board_command(request: BoardCommandRequest):
     """Advanced console: send a $-command to the board and return the recent
@@ -1241,6 +1281,15 @@ async def board_command(request: BoardCommandRequest):
     command = request.command.strip()
     if not command:
         raise HTTPException(status_code=400, detail="Empty command")
+    # `?` is GRBL's realtime status query. The firmware's /command gateway
+    # answers a bare `?` with its help text, so serve the status report from
+    # /sand_status instead — what the user actually asked for.
+    if command == "?":
+        try:
+            st = await asyncio.to_thread(state.conn.get_status)
+            return {"success": True, "responses": [_format_status_report(st)], "log": ""}
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Status query failed: {e}")
     try:
         response = await asyncio.to_thread(state.conn.run_command, command)
         log_tail = ""
