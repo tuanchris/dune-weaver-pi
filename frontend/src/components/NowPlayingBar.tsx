@@ -220,8 +220,9 @@ export function NowPlayingBar({ isLogsOpen = false, logsDrawerHeight = 256, isVi
   const lastProgressTimeRef = useRef<number>(0)
   const smoothProgressRef = useRef<number>(0)
 
-  // Fetch preview images for current and next patterns
+  // Fetch preview images for current, next and (while waiting) last patterns
   const [nextPreviewUrl, setNextPreviewUrl] = useState<string | null>(null)
+  const [lastPreviewUrl, setLastPreviewUrl] = useState<string | null>(null)
   const lastFetchedFilesRef = useRef<string>('')
 
   useEffect(() => {
@@ -230,9 +231,14 @@ export function NowPlayingBar({ isLogsOpen = false, logsDrawerHeight = 256, isVi
 
     const currentFile = status?.current_file
     const nextFile = status?.playlist?.next_file
+    // `last` = the just-finished pattern that's drawn on the table now. Only
+    // fetch/show it during the between-patterns pause, where it fills the
+    // otherwise-empty main disc as "on the table now".
+    const waiting = (status?.pause_time_remaining ?? 0) > 0
+    const lastFile = waiting ? status?.playlist?.last_file : null
 
     // Build list of files to fetch
-    const filesToFetch = [currentFile, nextFile].filter(Boolean) as string[]
+    const filesToFetch = [currentFile, nextFile, lastFile].filter(Boolean) as string[]
     const fetchKey = filesToFetch.join('|')
 
     // Skip if we already fetched these exact files
@@ -252,16 +258,23 @@ export function NowPlayingBar({ isLogsOpen = false, logsDrawerHeight = 256, isVi
           } else {
             setNextPreviewUrl(null)
           }
+          if (lastFile && data[lastFile]?.image_data) {
+            setLastPreviewUrl(data[lastFile].image_data)
+          } else {
+            setLastPreviewUrl(null)
+          }
         })
         .catch(() => {
           setPreviewUrl(null)
           setNextPreviewUrl(null)
+          setLastPreviewUrl(null)
         })
     } else {
       setPreviewUrl(null)
       setNextPreviewUrl(null)
+      setLastPreviewUrl(null)
     }
-  }, [isVisible, status?.current_file, status?.playlist?.next_file])
+  }, [isVisible, status?.current_file, status?.playlist?.next_file, status?.playlist?.last_file, status?.pause_time_remaining])
 
   // Canvas drawing functions for real-time preview
   const polarToCartesian = useCallback((theta: number, rho: number, size: number) => {
@@ -672,6 +685,10 @@ export function NowPlayingBar({ isLogsOpen = false, logsDrawerHeight = 256, isVi
 
   // Detect waiting state between patterns
   const isWaiting = (status?.pause_time_remaining ?? 0) > 0
+  // Main disc art: while waiting between patterns nothing is drawing, so show
+  // the just-finished pattern that's on the table now (`last`); otherwise the
+  // pattern currently being drawn.
+  const displayPreviewUrl = isWaiting ? lastPreviewUrl : previewUrl
   const waitTimeRemaining = status?.pause_time_remaining ?? 0
   const originalWaitTime = status?.original_pause_time ?? 0
   const waitProgress = originalWaitTime > 0 ? ((originalWaitTime - waitTimeRemaining) / originalWaitTime) * 100 : 0
@@ -757,10 +774,10 @@ export function NowPlayingBar({ isLogsOpen = false, logsDrawerHeight = 256, isVi
                   onClick={() => isPlaying && setIsExpanded(true)}
                   title={isPlaying ? 'Click to expand' : undefined}
                 >
-                  {previewUrl && isPlaying ? (
+                  {displayPreviewUrl && isPlaying ? (
                     <img
-                      src={previewUrl}
-                      alt={patternName}
+                      src={displayPreviewUrl}
+                      alt={isWaiting ? 'On the table now' : patternName}
                       className="w-full h-full object-cover pattern-preview"
                     />
                   ) : (
@@ -958,10 +975,10 @@ export function NowPlayingBar({ isLogsOpen = false, logsDrawerHeight = 256, isVi
                 <div className="flex items-center justify-center gap-3">
                   {/* Current pattern preview */}
                   <div className="w-10 h-10 md:w-12 md:h-12 rounded-full overflow-hidden bg-muted border shrink-0">
-                    {previewUrl ? (
+                    {displayPreviewUrl ? (
                       <img
-                        src={previewUrl}
-                        alt={patternName}
+                        src={displayPreviewUrl}
+                        alt={isWaiting ? 'On the table now' : patternName}
                         className="w-full h-full object-cover pattern-preview"
                       />
                     ) : (

@@ -200,7 +200,35 @@ class TestTranslateStatus:
         ), BoardObserver())
         assert out["playlist"]["shuffled"] is True
         assert out["playlist"]["next_file"] is None
+        assert out["playlist"]["last_file"] is None
         assert out["playlist"]["files"]  # still served read-only
+
+    def test_firmware_next_last_preferred(self):
+        # When the firmware reports next/last (shuffle-aware), use them verbatim
+        # rather than deriving next from file order — correct even with shuffle.
+        state.conn = FakeConn()
+        execution.current_run = RunContext(kind="playlist", playlist_name="fav",
+                                           shuffle=True)
+        state.current_playlist = ["./patterns/a.thr", "./patterns/b.thr"]
+        out = translate_status(_status(
+            playlist={"active": True, "index": 0, "total": 2, "name": "fav",
+                      "next": "/patterns/b.thr", "last": "/patterns/a.thr"},
+        ), BoardObserver())
+        assert out["playlist"]["next_file"] == "./patterns/b.thr"
+        assert out["playlist"]["last_file"] == "./patterns/a.thr"
+
+    def test_firmware_empty_next_last_stay_none(self):
+        # "" means unknown (reshuffling / before the first completion): don't
+        # fall back to a wrong order-derived guess.
+        state.conn = FakeConn()
+        execution.current_run = RunContext(kind="playlist", playlist_name="fav")
+        state.current_playlist = ["./patterns/a.thr", "./patterns/b.thr"]
+        out = translate_status(_status(
+            playlist={"active": True, "index": 0, "total": 2, "name": "fav",
+                      "next": "", "last": ""},
+        ), BoardObserver())
+        assert out["playlist"]["next_file"] is None
+        assert out["playlist"]["last_file"] is None
 
 
 class TestObserverEdges:

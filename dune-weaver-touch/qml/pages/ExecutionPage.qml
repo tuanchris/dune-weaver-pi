@@ -19,6 +19,15 @@ Page {
     readonly property real progressRatio: backend ? backend.progress / 100 : 0
     readonly property bool inPause: backend && backend.pauseRemaining >= 0
 
+    // The disc art. While waiting between patterns nothing is being drawn, so
+    // show the just-finished pattern that's on the table now (`last`); otherwise
+    // the pattern currently being woven.
+    readonly property string discPreview: {
+        if (inPause && backend && backend.lastPreview) return backend.lastPreview
+        return patternPreview
+    }
+    readonly property bool hasDisc: hasPattern || inPause
+
     property string displayName: {
         var name = ""
         if (backend && backend.currentFile) name = backend.currentFile
@@ -189,10 +198,10 @@ Page {
                     Image {
                         anchors.fill: parent
                         anchors.margins: 14
-                        source: patternPreview ? "file://" + patternPreview : ""
+                        source: discPreview ? "file://" + discPreview : ""
                         fillMode: Image.PreserveAspectFit
                         asynchronous: true
-                        visible: hasPattern && status === Image.Ready
+                        visible: hasDisc && status === Image.Ready
                     }
 
                     // Resting dish when idle (or while the preview renders)
@@ -203,7 +212,7 @@ Page {
                         color: Components.ThemeManager.surfaceColor
                         border.width: 1
                         border.color: Components.ThemeManager.borderColor
-                        visible: !hasPattern || patternPreview === ""
+                        visible: !hasDisc || discPreview === ""
 
                         Column {
                             anchors.centerIn: parent
@@ -315,6 +324,61 @@ Page {
                     }
 
                     Item { Layout.fillHeight: true }
+
+                    // Up next — preview disc for the pattern the table will weave
+                    // after this one (firmware `next`; shuffle-aware). Hidden
+                    // during the pause, where the header already reads "Up next".
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.bottomMargin: Components.ThemeManager.spaceLg
+                        spacing: Components.ThemeManager.spaceMd
+                        visible: backend && backend.playlistActive && !inPause
+                                 && backend.nextPreview !== ""
+
+                        Item {
+                            Layout.preferredWidth: 52
+                            Layout.preferredHeight: 52
+
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: width / 2
+                                color: Components.ThemeManager.surfaceColor
+                                border.width: 1
+                                border.color: Components.ThemeManager.borderColor
+                                visible: nextDisc.status !== Image.Ready
+                            }
+                            Image {
+                                id: nextDisc
+                                anchors.fill: parent
+                                source: backend && backend.nextPreview
+                                        ? "file://" + backend.nextPreview : ""
+                                fillMode: Image.PreserveAspectFit
+                                asynchronous: true
+                            }
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+
+                            Label {
+                                text: "Up next"
+                                font.family: Components.ThemeManager.fontDisplay
+                                font.pixelSize: 10
+                                font.letterSpacing: 1.4
+                                font.capitalization: Font.AllUppercase
+                                color: Components.ThemeManager.textTertiary
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: backend ? backend.nextPattern : ""
+                                font.family: Components.ThemeManager.fontMedium
+                                font.pixelSize: Components.ThemeManager.fontSizeBody
+                                color: Components.ThemeManager.textSecondary
+                                elide: Text.ElideRight
+                            }
+                        }
+                    }
 
                     // Transport
                     RowLayout {

@@ -458,8 +458,17 @@ def translate_status(st: Optional[dict], obs: Optional["BoardObserver"] = None,
         index = int(pl.get("index", 0) or 0)
         total = int(pl.get("total", 0) or 0) or len(files)
         shuffled = bool(ctx.shuffle) if ctx else False
-        next_file = None
-        if files and not shuffled:
+        # Prefer the firmware's own next/last (SandStatus): `next` is the
+        # shuffle-aware "up next", `last` is the just-finished pattern = what is
+        # drawn on the table now. Both are "" when unknown (a fresh reshuffle,
+        # or before the first pattern of the run has completed). Only fall back
+        # to deriving `next` from file order for older firmware that omits the
+        # field entirely — deriving it is wrong once shuffle is on.
+        fw_next = pl.get("next")
+        fw_last = pl.get("last")
+        next_file = _from_sd_path(fw_next) if fw_next else None
+        last_file = _from_sd_path(fw_last) if fw_last else None
+        if fw_next is None and files and not shuffled:
             # While clearing, the "next" thing is the pattern the clear precedes.
             next_idx = index if clearing else index + 1
             if 0 <= next_idx < len(files):
@@ -471,6 +480,7 @@ def translate_status(st: Optional[dict], obs: Optional["BoardObserver"] = None,
             "mode": (ctx.run_mode if ctx else "indefinite"),
             "files": files,
             "next_file": next_file,
+            "last_file": last_file,
             "shuffled": shuffled,
         }
 

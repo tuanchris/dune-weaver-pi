@@ -223,7 +223,13 @@ class Backend(QObject):
         self._playlist_index = 0      # 0-based position in the playlist
         self._playlist_total = 0
         self._playlist_name = ""
-        self._next_pattern = ""       # next pattern (display name, no path/.thr)
+        self._next_pattern = ""       # up next (display name, no path/.thr)
+        self._next_preview = ""       # cached preview PNG for the up-next disc
+        self._last_pattern = ""       # on the table now (display name); pause only
+        self._last_preview = ""       # cached preview PNG for the on-table disc
+        # Which pattern each auxiliary disc has a render scheduled for — guards
+        # against re-scheduling the same render on every 1 Hz status poll.
+        self._aux_preview_target = {"next": "", "last": ""}
         self._playlist_clearing = False
         self._pause_remaining = -1    # seconds until next pattern; -1 = not pausing
         self._pause_total = -1
@@ -358,14 +364,23 @@ class Backend(QObject):
         self._playlist_index = int(pl.get("index", 0) or 0)
         self._playlist_total = int(pl.get("total", 0) or 0)
         self._playlist_name = str(pl.get("name") or "")
-        nxt = str(pl.get("next") or "").rsplit("/", 1)[-1]
-        self._next_pattern = nxt[:-4] if nxt.endswith(".thr") else nxt
         self._playlist_clearing = bool(pl.get("clearing"))
 
         def _secs(v):
             return int(v) if isinstance(v, (int, float)) and v >= 0 else -1
         self._pause_remaining = _secs(pl.get("pause_remaining", -1))
         self._pause_total = _secs(pl.get("pause_total", -1))
+
+        # Up next (shuffle-aware) and, only while waiting between patterns, the
+        # just-finished pattern that is drawn on the table now. Both come from
+        # the firmware's SandStatus next/last fields; render their preview discs.
+        next_rel = self._rel_pattern(pl.get("next"))
+        self._next_pattern = self._display_name(next_rel)
+        waiting = self._pause_remaining >= 0
+        last_rel = self._rel_pattern(pl.get("last")) if waiting else ""
+        self._last_pattern = self._display_name(last_rel)
+        self._update_aux_preview("next", next_rel)
+        self._update_aux_preview("last", last_rel)
 
         new_paused = (state == "Hold")
         if new_paused != self._is_paused:
@@ -452,6 +467,22 @@ class Backend(QObject):
     def hasTablePassword(self):
         return bool(self._table_password_b64)
 
+    @staticmethod
+    def _rel_pattern(raw):
+        """Strip the board's SD prefixes to a catalog-relative pattern path
+        ('/patterns/a/b.thr' -> 'a/b.thr'), mirroring the current-file handling."""
+        p = str(raw or "")
+        for prefix in ("/sd/patterns/", "/patterns/", "/sd/", "/"):
+            if p.startswith(prefix):
+                return p[len(prefix):]
+        return p
+
+    @staticmethod
+    def _display_name(rel_name):
+        """Basename without the .thr extension, for on-screen labels."""
+        name = rel_name.rsplit("/", 1)[-1]
+        return name[:-4] if name.endswith(".thr") else name
+
     def _preview_path(self, rel_name):
         """Best-effort cached preview path for a pattern (may be empty)."""
         try:
@@ -459,6 +490,35 @@ class Backend(QObject):
             return thr_preview.cached_preview(self.client.base_url, rel_name)
         except Exception:
             return ""
+
+    def _update_aux_preview(self, which, rel_name):
+        """Point an auxiliary disc ('next' / 'last') at its cached preview,
+        rendering it in the background the first time if not yet cached."""
+        attr = f"_{which}_preview"
+        if not rel_name:
+            if getattr(self, attr):
+                setattr(self, attr, "")
+            self._aux_preview_target[which] = ""
+            return
+        cached = self._preview_path(rel_name)
+        setattr(self, attr, cached)
+        if not cached and self._aux_preview_target.get(which) != rel_name:
+            # Not cached yet — render once (don't reschedule every poll).
+            self._aux_preview_target[which] = rel_name
+            _run(self._render_aux_preview(which, rel_name))
+
+    async def _render_aux_preview(self, which, rel_name):
+        try:
+            import thr_preview
+            path = await thr_preview.render_preview(
+                self.client, self.client.base_url, rel_name)
+        except Exception as exc:
+            logger.debug(f"aux preview render failed for {rel_name}: {exc}")
+            return
+        # Ignore a stale render whose disc has since moved to another pattern.
+        if path and self._aux_preview_target.get(which) == rel_name:
+            setattr(self, f"_{which}_preview", path)
+            self.statusChanged.emit()
 
     async def _render_preview_late(self, rel_name):
         """Render an uncached preview for the executing pattern, then notify.
@@ -519,6 +579,18 @@ class Backend(QObject):
     @Property(str, notify=statusChanged)
     def nextPattern(self):
         return self._next_pattern
+
+    @Property(str, notify=statusChanged)
+    def nextPreview(self):
+        return self._next_preview
+
+    @Property(str, notify=statusChanged)
+    def lastPattern(self):
+        return self._last_pattern
+
+    @Property(str, notify=statusChanged)
+    def lastPreview(self):
+        return self._last_preview
 
     @Property(bool, notify=statusChanged)
     def playlistClearing(self):

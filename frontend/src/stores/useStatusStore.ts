@@ -26,6 +26,9 @@ export interface StatusData {
     total_files: number
     mode: string
     next_file: string | null
+    // Just-finished pattern = what is drawn on the table now. Only meaningful
+    // (and only shown) during the between-patterns pause. null = unknown.
+    last_file: string | null
     files: string[]
     name: string | null
     // Firmware-side shuffle: the played order is unknown to the host, so the
