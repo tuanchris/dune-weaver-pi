@@ -505,6 +505,13 @@ class BoardObserver:
 
     POLL_ACTIVE = 1.0
     POLL_IDLE = 2.0
+    # Board-load backoff — the lever that targets the actual failure mode. When
+    # the board signals heap pressure (heap_largest below WARN), ease the poll
+    # right off so the relay stops competing for the last few KB against
+    # whatever is straining the single-client server. Mirrors the app / HA. See
+    # the firmware repo's POLLING.md.
+    POLL_LOWHEAP = 30.0
+    HEAP_LARGEST_WARN = 20000
     OFFLINE_GRACE = 3  # consecutive failures before a run is declared over
     RECONNECT_EVERY = 15.0  # seconds between reconnect/relocate attempts while offline
 
@@ -586,6 +593,9 @@ class BoardObserver:
         await self.process(st)
         if st is None:
             await self._maybe_reconnect()
+        largest = st.get("heap_largest") if st else None
+        if isinstance(largest, (int, float)) and largest < self.HEAP_LARGEST_WARN:
+            return self.POLL_LOWHEAP
         active = bool(st and (st.get("running") or (st.get("playlist") or {}).get("active")
                               or _state(st) in ("Hold", "Home", "Jog")))
         return self.POLL_ACTIVE if active else self.POLL_IDLE

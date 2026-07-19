@@ -56,7 +56,15 @@ class Backend(QObject):
     # Constants
     SETTINGS_FILE = "touch_settings.json"
     DEFAULT_SCREEN_TIMEOUT = 300  # 5 minutes in seconds
-    STATUS_POLL_MS = 1000         # /sand_status poll interval
+    STATUS_POLL_MS = 1000         # base /sand_status poll interval
+    # Board-load backoff — the lever that targets the actual failure mode. When
+    # the board signals heap pressure (heap_largest below the firmware's WARN
+    # floor), poll slowly so we stop competing for the last few KB against
+    # whatever is straining it. The single-client server is only load-stressed
+    # when heap is tight, so that's the signal to ease off. Mirrors the HA
+    # integration. See the firmware repo's POLLING.md.
+    STATUS_POLL_LOWHEAP_MS = 30000
+    HEAP_LARGEST_WARN = 20000
     # Consecutive poll failures before the UI flips to "disconnected". The
     # board's single-threaded web server stalls status reads for seconds while
     # it serves file transfers, so one slow/failed poll means "busy", not
@@ -194,21 +202,10 @@ class Backend(QObject):
         self._screen_timer.timeout.connect(self._check_screen_timeout)
         self._screen_timer.start(1000)
 
-        # Load local settings first
-        self._load_local_settings()
-        self._detect_backlight()
-
-        # Apply the saved table password ($Sand/Password key) to the client.
-        self.client.set_api_key(self._decode_password(self._table_password_b64))
-
-        # Point the shared client at the saved / env-configured table.
-        env_url = os.environ.get("DUNE_WEAVER_URL", "")
-        initial_url = env_url or self._saved_table_url
-        if initial_url:
-            self.client.set_base_url(initial_url)
-            self._current_port = self.client.base_url
-
-        # Status polling replaces the old WebSocket status stream.
+        # Status polling replaces the old WebSocket status stream. These must
+        # be initialized before _load_local_settings() / the client setup below,
+        # which read _table_password_b64 (and can trigger a settings save), and
+        # before any status poll runs against _poll_inflight.
         self._status_timer = QTimer()
         self._status_timer.timeout.connect(self._tick_status)
         self._time_synced = False
@@ -229,6 +226,21 @@ class Backend(QObject):
         self._playlist_clearing = False
         self._pause_remaining = -1    # seconds until next pattern; -1 = not pausing
         self._pause_total = -1
+
+        # Load local settings first (overwrites _table_password_b64 / URL if a
+        # saved settings file exists).
+        self._load_local_settings()
+        self._detect_backlight()
+
+        # Apply the saved table password ($Sand/Password key) to the client.
+        self.client.set_api_key(self._decode_password(self._table_password_b64))
+
+        # Point the shared client at the saved / env-configured table.
+        env_url = os.environ.get("DUNE_WEAVER_URL", "")
+        initial_url = env_url or self._saved_table_url
+        if initial_url:
+            self.client.set_base_url(initial_url)
+            self._current_port = self.client.base_url
 
         # Kick everything off once the event loop is running.
         QTimer.singleShot(200, self._start)
@@ -372,6 +384,15 @@ class Backend(QObject):
         led = status.get("led")
         if isinstance(led, dict):
             self._ingest_led_status(led)
+
+        # Board-load backoff (see STATUS_POLL_LOWHEAP_MS): ease off only when the
+        # board signals heap pressure, regardless of what it's doing — the
+        # single-client server is only load-stressed when heap is tight.
+        largest = status.get("heap_largest")
+        heap_ok = not isinstance(largest, (int, float)) or largest >= self.HEAP_LARGEST_WARN
+        desired = self.STATUS_POLL_MS if heap_ok else self.STATUS_POLL_LOWHEAP_MS
+        if self._status_timer.isActive() and self._status_timer.interval() != desired:
+            self._status_timer.setInterval(desired)
 
         self.statusChanged.emit()
         self.progressChanged.emit()
