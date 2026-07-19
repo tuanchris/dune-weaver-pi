@@ -10,6 +10,7 @@
 #   stop        Stop Dune Weaver
 #   restart     Restart Dune Weaver
 #   update      Pull latest changes and restart
+#               (--no-system-update skips the 'apt update' refresh)
 #   logs        View live logs (Ctrl+C to exit)
 #   status      Show service status
 #   shell       Open a shell with the venv activated
@@ -30,9 +31,14 @@ NC='\033[0m'
 
 # Find dune-weaver directory
 find_install_dir() {
-    # Check common locations
-    if [[ -f "$HOME/dune-weaver/main.py" ]]; then
+    # Check common locations (current 'dune-weaver-pi' name first, then the
+    # legacy 'dune-weaver' name so older installs keep working)
+    if [[ -f "$HOME/dune-weaver-pi/main.py" ]]; then
+        echo "$HOME/dune-weaver-pi"
+    elif [[ -f "$HOME/dune-weaver/main.py" ]]; then
         echo "$HOME/dune-weaver"
+    elif [[ -f "/home/pi/dune-weaver-pi/main.py" ]]; then
+        echo "/home/pi/dune-weaver-pi"
     elif [[ -f "/home/pi/dune-weaver/main.py" ]]; then
         echo "/home/pi/dune-weaver"
     elif [[ -f "./main.py" ]]; then
@@ -68,7 +74,7 @@ check_installed() {
         echo ""
         echo "Please install first:"
         echo "  git clone https://github.com/tuanchris/dune-weaver-pi --single-branch"
-        echo "  cd dune-weaver"
+        echo "  cd dune-weaver-pi"
         echo "  dw install"
         exit 1
     fi
@@ -84,7 +90,7 @@ cmd_install() {
             echo -e "${RED}Error: Run this from the dune-weaver directory${NC}"
             echo ""
             echo "  git clone https://github.com/tuanchris/dune-weaver-pi --single-branch"
-            echo "  cd dune-weaver"
+            echo "  cd dune-weaver-pi"
             echo "  dw install"
             exit 1
         fi
@@ -120,8 +126,19 @@ cmd_update() {
     echo -e "${BLUE}Updating Dune Weaver...${NC}"
     cd "$INSTALL_DIR"
 
+    # Parse args: --continue is an internal marker set when we re-exec after
+    # the pull phase; --no-system-update skips the 'apt update' refresh below.
+    local continued=false
+    local update_system=true
+    for arg in "$@"; do
+        case "$arg" in
+            --continue) continued=true ;;
+            --no-system-update) update_system=false ;;
+        esac
+    done
+
     # Check if we should skip the pull phase (called after re-exec)
-    if [[ "$1" != "--continue" ]]; then
+    if [[ "$continued" != "true" ]]; then
         echo "Pulling latest code..."
         run_as_user git config --global --add safe.directory "$INSTALL_DIR" 2>/dev/null || true
         local branch
@@ -135,9 +152,12 @@ cmd_update() {
         sudo cp "$INSTALL_DIR/dw" /usr/local/bin/dw
         sudo chmod +x /usr/local/bin/dw
 
-        # Re-exec with the new script to ensure new code runs
+        # Re-exec with the new script to ensure new code runs — carry the
+        # user's flags across so they still apply after the re-exec.
         echo "Restarting with updated CLI..."
-        exec /usr/local/bin/dw update --continue
+        local reexec_args=(update --continue)
+        [[ "$update_system" == "false" ]] && reexec_args+=(--no-system-update)
+        exec /usr/local/bin/dw "${reexec_args[@]}"
     fi
 
     # Detect Docker-to-native migration: no venv means first native run
@@ -149,12 +169,15 @@ cmd_update() {
 
         # Install native system dependencies (nginx, python3-venv, gcc, etc.)
         echo "Installing system dependencies..."
-        sudo apt update
+        if [[ "$update_system" == "true" ]]; then
+            sudo apt update
+        else
+            echo "Skipping 'apt update' (--no-system-update)"
+        fi
         sudo DEBIAN_FRONTEND=noninteractive apt install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
             python3-venv python3-pip python3-dev \
-            gcc g++ make swig unzip wget \
+            gcc g++ make \
             libjpeg-dev zlib1g-dev \
-            libgpiod-dev gpiod \
             nginx
 
         # Create Python venv as real user
@@ -501,6 +524,7 @@ cmd_help() {
     echo "  stop        Stop Dune Weaver"
     echo "  restart     Restart Dune Weaver"
     echo "  update      Pull latest changes and restart"
+    echo "              (--no-system-update skips the 'apt update' refresh)"
     echo "  checkout    Switch to a branch and rebuild"
     echo "  logs [N]    View logs (N=number of lines, or follow if omitted)"
     echo "  status      Show service status"
@@ -530,7 +554,8 @@ case "${1:-help}" in
         cmd_restart
         ;;
     update)
-        cmd_update "$2"
+        shift
+        cmd_update "$@"
         ;;
     checkout)
         cmd_checkout "$2"

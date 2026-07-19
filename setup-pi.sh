@@ -7,13 +7,14 @@
 #
 # OR from existing clone:
 #   git clone https://github.com/tuanchris/dune-weaver-pi --single-branch
-#   cd dune-weaver
+#   cd dune-weaver-pi
 #   bash setup-pi.sh
 #
 # Options:
-#   --no-wifi-fix   Skip WiFi stability fix
-#   --no-hotspot    Skip autohotspot setup
-#   --help          Show help
+#   --no-wifi-fix         Skip WiFi stability fix
+#   --no-hotspot          Skip autohotspot setup
+#   --no-system-update    Skip 'apt update' package list refresh
+#   --help                Show help
 #
 
 set -e
@@ -28,13 +29,14 @@ NC='\033[0m' # No Color
 # Default options
 FIX_WIFI=true  # Applied by default for stability
 SETUP_HOTSPOT=true  # Autohotspot for first-time WiFi setup
+UPDATE_SYSTEM=true  # Refresh apt package lists before installing deps
 REAL_USER="${SUDO_USER:-$USER}"
 REAL_HOME="$(eval echo ~"$REAL_USER")"
 # Fallback: if tilde didn't expand, read from /etc/passwd
 if [[ "$REAL_HOME" == "~$REAL_USER" ]]; then
     REAL_HOME="$(grep "^$REAL_USER:" /etc/passwd | cut -d: -f6)"
 fi
-INSTALL_DIR="$REAL_HOME/dune-weaver"
+INSTALL_DIR="$REAL_HOME/dune-weaver-pi"
 REPO_URL="https://github.com/tuanchris/dune-weaver-pi"
 
 # Parse arguments
@@ -48,6 +50,10 @@ while [[ $# -gt 0 ]]; do
             SETUP_HOTSPOT=false
             shift
             ;;
+        --no-system-update)
+            UPDATE_SYSTEM=false
+            shift
+            ;;
         --help|-h)
             echo "Dune Weaver Raspberry Pi Setup Script"
             echo ""
@@ -55,12 +61,13 @@ while [[ $# -gt 0 ]]; do
             echo "  curl -fsSL https://raw.githubusercontent.com/tuanchris/dune-weaver-pi/main/setup-pi.sh | bash"
             echo ""
             echo "Or from existing clone:"
-            echo "  cd ~/dune-weaver && bash setup-pi.sh [OPTIONS]"
+            echo "  cd ~/dune-weaver-pi && bash setup-pi.sh [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --no-wifi-fix   Skip WiFi stability fix (applied by default)"
-            echo "  --no-hotspot    Skip autohotspot setup"
-            echo "  --help, -h      Show this help message"
+            echo "  --no-wifi-fix        Skip WiFi stability fix (applied by default)"
+            echo "  --no-hotspot         Skip autohotspot setup"
+            echo "  --no-system-update   Skip 'apt update' package list refresh"
+            echo "  --help, -h           Show this help message"
             exit 0
             ;;
         *)
@@ -114,55 +121,37 @@ print_success() {
 # Install system dependencies
 install_system_deps() {
     print_step "Installing system dependencies..."
-    sudo apt update
+    if [[ "$UPDATE_SYSTEM" == "true" ]]; then
+        sudo apt update
+    else
+        echo "Skipping 'apt update' (--no-system-update)"
+    fi
     sudo DEBIAN_FRONTEND=noninteractive apt install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
         python3-venv python3-pip python3-dev \
-        gcc g++ make swig unzip wget \
+        gcc g++ make \
         libjpeg-dev zlib1g-dev \
-        libgpiod-dev gpiod \
         nginx git vim
     print_success "System dependencies installed"
 }
 
-# Ensure lgpio C library is available for pip to build against
-install_lgpio() {
-    local syslib="/usr/lib/aarch64-linux-gnu"
+# Stop any running Dune Weaver services before touching the repo.
+# A running backend or touch app can hold port 8080, keep files open, or race
+# with the git pull/clone below — stop them up front for a clean setup. Unit
+# names are fixed (dune-weaver, dune-weaver-touch) regardless of install dir.
+stop_existing_services() {
+    print_step "Stopping any running Dune Weaver services..."
 
-    # Raspberry Pi OS Trixie ships liblgpio.so.1 but no unversioned
-    # liblgpio.so symlink (normally provided by a -dev package).
-    # The build-time linker needs the unversioned name (-llgpio → liblgpio.so).
-    if [[ ! -e "$syslib/liblgpio.so" ]]; then
-        # Check if the versioned library exists (from Pi OS)
-        local versioned
-        versioned=$(ls "$syslib"/liblgpio.so.* 2>/dev/null | head -1)
-
-        if [[ -n "$versioned" ]]; then
-            print_step "Creating liblgpio.so build symlink..."
-            sudo ln -sf "$versioned" "$syslib/liblgpio.so"
-            sudo ldconfig
-            print_success "liblgpio.so symlink created (-> $(basename "$versioned"))"
-        else
-            # Not in system paths — build from source
-            print_step "Building lgpio C library from source..."
-            local tmpdir
-            tmpdir=$(mktemp -d)
-            cd "$tmpdir"
-            wget -q https://github.com/joan2937/lg/archive/master.zip
-            unzip -q master.zip
-            cd lg-master
-            make
-            sudo make install
-            cd /
-            rm -rf "$tmpdir"
-            # Symlink from /usr/local/lib into system path
-            if [[ -f /usr/local/lib/liblgpio.so ]]; then
-                sudo ln -sf /usr/local/lib/liblgpio.so "$syslib/liblgpio.so"
-            fi
-            sudo ldconfig
-            print_success "lgpio C library built and installed"
+    local stopped=false
+    for svc in dune-weaver dune-weaver-touch; do
+        if systemctl is-active --quiet "$svc" 2>/dev/null; then
+            echo "Stopping ${svc}.service..."
+            sudo systemctl stop "$svc" 2>/dev/null || true
+            stopped=true
         fi
-    else
-        echo "liblgpio.so already available for linking"
+    done
+
+    if [[ "$stopped" == "false" ]]; then
+        echo "No running services found"
     fi
 }
 
@@ -353,90 +342,33 @@ setup_autohotspot() {
     print_success "Autohotspot setup complete"
 }
 
-# Configure UART for GPIO pin connection to DLC32/ESP32
-configure_uart() {
+# Clean up UART overlays left over from pre-5.0 (serial/USB) setups.
+# Dune Weaver 5.0 talks to the DLC32/ESP32 firmware over Wi-Fi (HTTP) — there is
+# no serial or GPIO connection to the board — so any UART overlays a previous
+# install added to config.txt are now dead weight.
+cleanup_legacy_uart() {
     local CONFIG_FILE="/boot/firmware/config.txt"
     if [[ ! -f "$CONFIG_FILE" ]]; then
         CONFIG_FILE="/boot/config.txt"
     fi
+    [[ -f "$CONFIG_FILE" ]] || return
 
-    echo ""
-    echo -e "${GREEN}How is your Raspberry Pi connected to the sand table controller (DLC32/ESP32)?${NC}"
-    echo ""
-    echo "  1) USB cable"
-    echo "  2) UART over GPIO pins (TX/RX wired to header pins)"
-    echo ""
-    echo -e "  ${YELLOW}Note: USB is not reliable on Pi 3B+. Use UART for Pi 3B+.${NC}"
-    echo ""
-    read -p "Enter choice [1/2] (default: 1): " -n 1 -r uart_choice
-    echo ""
-
-    if [[ "$uart_choice" == "2" ]]; then
-        echo ""
-        echo -e "${YELLOW}============================================${NC}"
-        echo -e "${YELLOW}  UART Setup — raspi-config will run next${NC}"
-        echo -e "${YELLOW}============================================${NC}"
-        echo ""
-        echo -e "  When prompted, select:"
-        echo -e "    Login shell over serial?     →  ${GREEN}No${NC}"
-        echo -e "    Serial port hardware?        →  ${GREEN}Yes${NC}"
-        echo ""
-        read -p "Press Enter to continue..." -r
-        echo ""
-
-        # Disable serial console, enable serial hardware
-        if command -v raspi-config &> /dev/null; then
-            sudo raspi-config nonint do_serial 2
-            echo "Serial console disabled, serial hardware enabled"
-        else
-            print_warning "raspi-config not found, please run 'sudo raspi-config' manually"
-            print_warning "Go to: 3 Interface Options > I6 Serial Port > No (console) > Yes (hardware)"
+    local has_uart=false
+    for overlay in "dtoverlay=pi3-miniuart-bt" "dtoverlay=miniuart-bt" "enable_uart=1"; do
+        if grep -q "^${overlay}$" "$CONFIG_FILE" 2>/dev/null; then
+            has_uart=true
+            break
         fi
+    done
 
-        print_step "Configuring UART overlays..."
+    [[ "$has_uart" == "true" ]] || return
 
-        # Add UART overlays to config.txt if not already present
-        local needs_change=false
-        for overlay in "dtoverlay=pi3-miniuart-bt" "dtoverlay=miniuart-bt" "enable_uart=1"; do
-            if ! grep -q "^${overlay}$" "$CONFIG_FILE" 2>/dev/null; then
-                echo "$overlay" | sudo tee -a "$CONFIG_FILE" > /dev/null
-                needs_change=true
-            fi
-        done
-
-        if [[ "$needs_change" == "true" ]]; then
-            echo "Added UART overlays to $CONFIG_FILE"
-        else
-            echo "UART overlays already present in $CONFIG_FILE"
-        fi
-
-        NEEDS_REBOOT=true
-        print_success "UART configured. A reboot is required for changes to take effect."
-    else
-        # USB mode — check if UART config exists and offer to clean it up
-        local has_uart=false
-        for overlay in "dtoverlay=pi3-miniuart-bt" "dtoverlay=miniuart-bt" "enable_uart=1"; do
-            if grep -q "^${overlay}$" "$CONFIG_FILE" 2>/dev/null; then
-                has_uart=true
-                break
-            fi
-        done
-
-        if [[ "$has_uart" == "true" ]]; then
-            echo -e "${YELLOW}UART overlays found in $CONFIG_FILE from a previous setup.${NC}"
-            read -p "Remove them? (y/N): " -n 1 -r remove_uart
-            echo ""
-            if [[ "$remove_uart" =~ ^[Yy]$ ]]; then
-                sudo sed -i '/^dtoverlay=pi3-miniuart-bt$/d' "$CONFIG_FILE"
-                sudo sed -i '/^dtoverlay=miniuart-bt$/d' "$CONFIG_FILE"
-                sudo sed -i '/^enable_uart=1$/d' "$CONFIG_FILE"
-                NEEDS_REBOOT=true
-                print_success "UART overlays removed. A reboot is recommended."
-            fi
-        else
-            echo "USB connection selected, no UART changes needed."
-        fi
-    fi
+    print_step "Removing legacy UART overlays (board is now driven over Wi-Fi)..."
+    sudo sed -i '/^dtoverlay=pi3-miniuart-bt$/d' "$CONFIG_FILE"
+    sudo sed -i '/^dtoverlay=miniuart-bt$/d' "$CONFIG_FILE"
+    sudo sed -i '/^enable_uart=1$/d' "$CONFIG_FILE"
+    NEEDS_REBOOT=true
+    print_success "Legacy UART overlays removed. A reboot is recommended."
 }
 
 # Remove software that is no longer needed on the Pi
@@ -534,14 +466,13 @@ main() {
     echo "Install directory: $INSTALL_DIR"
     echo ""
 
-    # Ask connection type upfront (before long-running installs)
-    configure_uart
-
     # Run setup steps
+    stop_existing_services
     check_raspberry_pi
     install_system_deps
     ensure_repo
     disable_wlan_powersave
+    cleanup_legacy_uart
 
     if [[ "$FIX_WIFI" == "true" ]]; then
         apply_wifi_fix
@@ -551,7 +482,6 @@ main() {
         setup_autohotspot
     fi
 
-    install_lgpio
     deploy_native
     install_cli
     cleanup_unused

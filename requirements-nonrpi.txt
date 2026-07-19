@@ -7,7 +7,6 @@
 # but DW LED features will be disabled (graceful degradation).
 # For full hardware support on Raspberry Pi, use: pip install -r requirements.txt
 
-pyserial>=3.5
 tqdm>=4.65.0
 paho-mqtt>=1.6.1
 python-dotenv>=1.0.0

@@ -65,7 +65,7 @@ curl -fsSL https://raw.githubusercontent.com/tuanchris/dune-weaver-pi/main/setup
 bash setup-pi.sh
 ```
 
-This installs Docker, clones the repo, and starts the application. Once it finishes, open **http://\<hostname\>.local** in your browser.
+This clones the repo, installs the backend as a native service (Python venv + systemd + nginx), and starts it. Once it finishes, open **http://\<hostname\>.local** in your browser.
 
 For full deployment options (Docker, manual install, development setup, Windows, and more), see the **[Deploying Backend](https://duneweaver.com/docs/deploying-backend)** guide.
 
