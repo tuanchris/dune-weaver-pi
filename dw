@@ -147,10 +147,16 @@ cmd_update() {
         run_as_user git reset --hard "origin/$branch"
         fix_repo_ownership
 
-        # Update dw CLI
+        # Update dw CLI — overwrite via temp + atomic mv so we don't truncate
+        # the script THIS process is still reading (in-place cp can corrupt the
+        # running dw before it reaches the exec below). mv swaps in a fresh
+        # inode; the exec then loads the new version.
         echo "Updating dw command..."
-        sudo cp "$INSTALL_DIR/dw" /usr/local/bin/dw
-        sudo chmod +x /usr/local/bin/dw
+        local tmp
+        tmp=$(sudo mktemp /usr/local/bin/.dw.XXXXXX)
+        sudo cp "$INSTALL_DIR/dw" "$tmp"
+        sudo chmod 0755 "$tmp"
+        sudo mv -f "$tmp" /usr/local/bin/dw
 
         # Re-exec with the new script to ensure new code runs — carry the
         # user's flags across so they still apply after the re-exec.
@@ -393,9 +399,13 @@ cmd_checkout() {
     source .venv/bin/activate
     run_as_user .venv/bin/pip install -r requirements.txt
 
-    # Update dw CLI from the new branch
-    sudo cp "$INSTALL_DIR/dw" /usr/local/bin/dw
-    sudo chmod +x /usr/local/bin/dw
+    # Update dw CLI from the new branch — temp + atomic mv (fresh inode) so we
+    # don't truncate the script this running process is still reading.
+    local dw_tmp
+    dw_tmp=$(sudo mktemp /usr/local/bin/.dw.XXXXXX)
+    sudo cp "$INSTALL_DIR/dw" "$dw_tmp"
+    sudo chmod 0755 "$dw_tmp"
+    sudo mv -f "$dw_tmp" /usr/local/bin/dw
 
     # Restart service
     sudo systemctl restart dune-weaver

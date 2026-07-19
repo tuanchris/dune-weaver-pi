@@ -322,11 +322,18 @@ EOF
 install_cli() {
     print_step "Installing 'dw' command..."
 
-    # Copy dw script to /usr/local/bin
-    sudo cp "$INSTALL_DIR/dw" /usr/local/bin/dw
-    sudo chmod +x /usr/local/bin/dw
+    # Overwrite any existing dw. Use a temp file + atomic mv (fresh inode)
+    # instead of cp-in-place: `dw install` runs this script while
+    # /usr/local/bin/dw is still the live parent process, and truncating its
+    # script file mid-run can corrupt it. mv keeps the running inode intact and
+    # swaps in the new version for the next invocation.
+    local tmp
+    tmp=$(sudo mktemp /usr/local/bin/.dw.XXXXXX)
+    sudo cp "$INSTALL_DIR/dw" "$tmp"
+    sudo chmod 0755 "$tmp"
+    sudo mv -f "$tmp" /usr/local/bin/dw
 
-    print_success "'dw' command installed"
+    print_success "'dw' command installed (overwrote any previous version)"
 }
 
 # Setup autohotspot
