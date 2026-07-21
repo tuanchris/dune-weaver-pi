@@ -38,3 +38,60 @@ exclude_lines = [
     "if __name__ == .__main__.:",
 ]
 show_missing = true
+
+[tool.ruff.lint]
+# Enable various linters to be run
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # whitespace
+    "W",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I"
+]
+
+
+# Ignore specific rules as needed to see the forest through the trees
+#
+# Ideally clean these up as time permits, or specally allow them
+# E - pycodestyle
+# F - Pyflakes
+# B - flake8-bugbear
+# I - isort for organizing imports
+# TRY - enforce clean exception handling
+# S - bandit for common security issues, many of which we don't really care about 
+# W - Whitespace
+#
+# E501 - long line
+# E741 - ambiguous variable name
+# E722 - bare except
+# W291 - trailing white space
+# W292 - add trailing newline
+# W293 - remove whitespace from blank line
+# UP006 - Upgrades generic type annotations from older uppercase built-ins to standard lowercase built-ins
+# UP007 - use the cleaner | instead of .
+# UP012 - Remove unecessary utf-8 encoding since this is the default in modern python
+# UP015 - remove redundant mode arguments to open as "r" is the default behavior
+# UP035 - Flags deprecated typing module imports
+# UP037 - Removes unneeded quotes around type annotations.
+# SIM102 - combine if statements with and
+# SIM103 - return the boolean directly
+# SIM105 - use contextlib.suppress(Exception) instead of try-except-pass
+# SIM108 - use ternary operator instead of if-else-block
+# SIM115 - use a context manager for opening files
+# SIM117 - use a single 'with' instead of multiple nested 'with' statements
+ignore = [
+  "E501", "E722",
+  "B904", "B007", "B008",
+  "UP006", "UP007", "UP012", "UP015", "UP035", "UP037",
+  "SIM102", "SIM103", "SIM105", "SIM108", "SIM115", "SIM117"
+  ]
+
