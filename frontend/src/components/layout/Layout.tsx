@@ -320,6 +320,9 @@ export function Layout() {
 
   // Derive isCurrentlyPlaying from currentPlayingFile
   const isCurrentlyPlaying = Boolean(currentPlayingFile)
+  // Waiting out the pause between playlist patterns: nothing is drawing, but a
+  // pause countdown is active — the playlist is still going, not stopped.
+  const isBetweenPatterns = !isCurrentlyPlaying && statusPauseTimeRemaining > 0
 
   // Auto-close NowPlayingBar when playback stops (watches store values)
   const wasNpPlayingRef = useRef<boolean | null>(null)
@@ -2121,13 +2124,13 @@ export function Layout() {
               : 'cursor-grab transition-all duration-300 hover:shadow-xl hover:scale-105 active:scale-95'
           }`}
           style={getButtonPositionStyle()}
-          aria-label={isCurrentlyPlaying ? 'Now Playing' : 'Not Playing'}
+          aria-label={isCurrentlyPlaying ? 'Now Playing' : isBetweenPatterns ? 'Between patterns' : 'Not Playing'}
         >
-          <span className={`material-icons-outlined text-xl ${isCurrentlyPlaying ? 'text-primary' : 'text-muted-foreground'}`}>
-            {isCurrentlyPlaying ? 'play_circle' : 'stop_circle'}
+          <span className={`material-icons-outlined text-xl ${isCurrentlyPlaying || isBetweenPatterns ? 'text-primary' : 'text-muted-foreground'}`}>
+            {isCurrentlyPlaying ? 'play_circle' : isBetweenPatterns ? 'hourglass_top' : 'stop_circle'}
           </span>
           <span className="text-sm font-medium">
-            {isCurrentlyPlaying ? 'Now Playing' : 'Not Playing'}
+            {isCurrentlyPlaying ? 'Now Playing' : isBetweenPatterns ? 'Between patterns' : 'Not Playing'}
           </span>
         </button>
       )}
