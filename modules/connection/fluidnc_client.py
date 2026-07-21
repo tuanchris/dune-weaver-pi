@@ -152,8 +152,18 @@ class FluidNCClient:
     # -- reads ---------------------------------------------------------------
 
     def get_status(self) -> dict:
-        """The board's /sand_status object (schema in API.md)."""
-        return self._get("/sand_status", timeout=3.0).json()
+        """The board's /sand_status object (schema in API.md).
+
+        Generous timeout: the board's single-threaded web server serializes
+        requests, so /sand_status legitimately waits several seconds behind a
+        file transfer or while streaming a pattern (one table was seen answering
+        in 2.3s, 14s, 0.1s back-to-back mid-pattern). A tight timeout makes a
+        busy-but-alive board look offline and burns the observer's OFFLINE_GRACE
+        (3 polls); keep it long so a slow poll succeeds instead of counting as a
+        failure. Runs in a worker thread (observer uses asyncio.to_thread), so a
+        slow read never blocks the event loop. Mirrors the DW mobile app.
+        """
+        return self._get("/sand_status", timeout=12.0).json()
 
     def get_bootlog(self) -> str:
         """Plain-text boot log ($SS startup log). After a panic reset it still

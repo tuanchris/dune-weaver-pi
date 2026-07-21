@@ -62,9 +62,11 @@ _RETRY_503_BASE = 0.3         # seconds; base for exponential backoff + jitter
 # transfer can legitimately time out once and succeed a moment later.
 _TRANSIENT_RETRY_DELAY = 0.5  # seconds between transient-error retries
 # Status poll budget. The board's web server serializes requests, so a status
-# read legitimately waits several seconds behind a file transfer — a tight
-# timeout here makes a busy board look dead.
-STATUS_TIMEOUT = 5           # seconds, for the ~1 Hz status poll
+# read legitimately waits several seconds behind a file transfer or while
+# streaming a pattern — a tight timeout makes a busy board look dead. One table
+# was seen answering /sand_status in 2.3s, 14s, 0.1s back-to-back mid-pattern,
+# so keep this generous (the fail-threshold grace covers the rare longer one).
+STATUS_TIMEOUT = 12          # seconds, for the ~1 Hz status poll
 
 
 def friendly_error(exc: BaseException) -> str:
