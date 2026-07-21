@@ -421,6 +421,68 @@ def adopt_board_playlists(conn=None) -> None:
         logger.info(f"Adopted board playlists: {', '.join(changed)}")
 
 
+def sync_board_catalog(conn=None) -> None:
+    """Cache the board's pattern manifest + playlists per board (the display source).
+
+    The board owns what patterns/playlists exist; the app shows this cached
+    catalog (see modules/core/board_cache). Read-only toward the SD: the pattern
+    manifest read is ETag-revalidated (an unchanged board re-downloads nothing —
+    a 304), and playlists are listed and their .txt entries read. Pattern
+    *content* is never fetched from the board — previews render from local files.
+    Best-effort: any failure leaves the last good cache in place.
+    """
+    from modules.core import board_cache
+    conn = conn or state.conn
+    if not conn:
+        return
+    key = board_cache.board_key()
+    if not key:
+        logger.debug("Board not identified yet; skipping catalog cache")
+        return
+
+    # Pattern manifest — conditional GET, so a reconnect to an unchanged board
+    # costs one 304 instead of re-streaming the whole catalog.
+    try:
+        cached = board_cache.load_manifest(key)
+        etag, patterns = conn.get_patterns_manifest(cached.get("etag"))
+        if patterns is None:
+            logger.debug(
+                f"Board manifest unchanged (304): {len(cached.get('patterns', []))} patterns cached")
+        else:
+            board_cache.save_manifest(patterns, etag, key)
+            logger.info(f"Cached board manifest: {len(patterns)} patterns (etag={etag or 'none'})")
+    except Exception as e:
+        logger.warning(f"Could not sync board pattern manifest: {e}")
+
+    # Playlists — names from /sand_playlists, entries from each /playlists/*.txt.
+    try:
+        names = conn.list_playlists()
+    except Exception as e:
+        logger.warning(f"Could not list board playlists: {e}")
+        return
+    if not isinstance(names, list):
+        return
+    playlists: dict = {}
+    for board_name in names:
+        fname = board_name if board_name.endswith(".txt") else f"{board_name}.txt"
+        name = fname[:-4]
+        if not name:
+            continue
+        try:
+            data = conn.fetch_file(f"/playlists/{fname}")
+        except Exception:
+            continue  # listed but unreadable (deleted mid-scan) — skip
+        files = [_from_playlist_sd_line(line)
+                 for line in data.decode("utf-8", "replace").splitlines() if line.strip()]
+        playlists[name] = files
+    board_cache.save_playlists(playlists, key)
+    logger.info(f"Cached {len(playlists)} board playlists for {key}")
+
+    # Signal the frontend (via /ws/status) that the catalog is ready/changed so
+    # it refetches — the connect-time fetch otherwise races this background sync.
+    state.catalog_version = getattr(state, "catalog_version", 0) + 1
+
+
 def adopt_auto_home(settings_map: dict) -> None:
     """Adopt the board's $Playlist/AutoHome cadence (0 = disabled). The host
     pushes it only when the user edits the setting in the web UI."""
@@ -502,4 +564,6 @@ def sync_on_connect(conn=None) -> None:
         adopt_auto_home(settings_map)
     except Exception as e:
         logger.warning(f"Could not adopt board settings: {e}")
+    # Cache this board's catalog (patterns + playlists) for per-board display.
+    sync_board_catalog(conn)
     adopt_board_playlists(conn)

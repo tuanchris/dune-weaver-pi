@@ -103,42 +103,24 @@ async def lifespan(app: FastAPI):
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    # Connect device in background so the web server starts immediately
-    async def connect_and_home():
-        """Connect to device and perform homing in background."""
+    # Connect device in background so the web server starts immediately.
+    async def connect_board():
+        """Connect to the board in the background — no host-side homing.
+
+        We deliberately do NOT home here: the firmware homes itself on boot
+        (config `startup_line0: $Sand/Home`, or the playlist-autostart
+        fallback that requests a home when it boots unhomed). Homing from the
+        host on every startup/reconnect would re-home a table that already knows
+        its position and interrupt a running pattern. Auto-play on boot likewise
+        lives on the board ($Playlist/Autostart, set via Settings).
+        """
         try:
-            # Connect without homing first (fast)
             await asyncio.to_thread(connection_manager.connect_device, False)
-
-            # If connected, perform homing in background (unless disabled)
-            if state.conn and state.conn.is_connected():
-                if not state.home_on_connect:
-                    logger.info("Device connected. Home-on-connect is disabled — skipping automatic homing.")
-                else:
-                    logger.info("Device connected, starting homing in background...")
-                    state.is_homing = True
-                    try:
-                        success = await asyncio.to_thread(connection_manager.home)
-                        if not success:
-                            logger.warning("Background homing failed or was skipped")
-                            # If sensor homing failed, close connection and wait for user action
-                            if state.sensor_homing_failed:
-                                logger.error("Sensor homing failed - closing connection. User must check sensor or switch to crash homing.")
-                                if state.conn:
-                                    await asyncio.to_thread(state.conn.close)
-                                    state.conn = None
-                                return  # Don't proceed with auto-play
-                    finally:
-                        state.is_homing = False
-                        logger.info("Background homing completed")
-
-                # Auto-play on boot lives on the board ($Playlist/Autostart,
-                # set via Settings) — nothing to do host-side.
         except Exception as e:
             logger.warning(f"Failed to auto-connect to board: {str(e)}")
 
-    # Start connection/homing in background - doesn't block server startup
-    asyncio.create_task(connect_and_home())
+    # Start connection in background - doesn't block server startup
+    asyncio.create_task(connect_board())
 
     # The board observer is the single status loop: it polls /sand_status,
     # translates it into the /ws/status contract, logs play history on file
@@ -360,7 +342,6 @@ class ScheduledPauseSettingsUpdate(BaseModel):
 class HomingSettingsUpdate(BaseModel):
     mode: Optional[int] = None
     angular_offset_degrees: Optional[float] = None
-    home_on_connect: Optional[bool] = None  # Auto-home after connecting on startup
     auto_home_enabled: Optional[bool] = None
     auto_home_after_patterns: Optional[int] = None
     hard_reset_theta: Optional[bool] = None  # Enable hard reset ($Bye) when resetting theta
@@ -603,7 +584,6 @@ async def get_all_settings():
             "mode": state.homing,
             "user_override": state.homing_user_override,  # True if user explicitly set, False if auto-detected
             "angular_offset_degrees": state.angular_homing_offset_degrees,
-            "home_on_connect": state.home_on_connect,
             "auto_home_enabled": state.auto_home_enabled,
             "auto_home_after_patterns": state.auto_home_after_patterns,
             "hard_reset_theta": state.hard_reset_theta  # Enable hard reset when resetting theta
@@ -768,8 +748,6 @@ async def update_settings(settings_update: SettingsUpdate):
             state.homing_user_override = True  # User explicitly set preference
         if h.angular_offset_degrees is not None:
             state.angular_homing_offset_degrees = h.angular_offset_degrees
-        if h.home_on_connect is not None:
-            state.home_on_connect = h.home_on_connect
         if h.auto_home_enabled is not None:
             state.auto_home_enabled = h.auto_home_enabled
         if h.auto_home_after_patterns is not None:
@@ -1660,146 +1638,58 @@ async def restart(request: ConnectRequest):
 
 @app.get("/list_theta_rho_files")
 async def list_theta_rho_files():
-    logger.debug("Listing theta-rho files")
-    # Run the blocking file system operation in a thread pool
-    files = await asyncio.to_thread(pattern_manager.list_theta_rho_files)
+    """The connected board's pattern catalog (from the per-board manifest cache).
+
+    The board owns what patterns exist; the host's local ./patterns is only a
+    preview asset store now. Empty until a board has been synced on connect.
+    """
+    files = await asyncio.to_thread(pattern_manager.board_catalog)
     return sorted(files)
 
 @app.get("/list_theta_rho_files_with_metadata")
 async def list_theta_rho_files_with_metadata():
-    """Get list of theta-rho files with metadata for sorting and filtering.
-    
-    Optimized to process files asynchronously and support request cancellation.
+    """The connected board's pattern catalog with metadata for sorting/filtering.
+
+    The path list comes from the board (per-board manifest cache); coordinate
+    count and modified-date are joined from the host's local metadata cache when
+    a local preview asset exists for that path, and default to 0 otherwise (a
+    board pattern the host has never seen has no local metadata — that's fine).
     """
-    from modules.core.cache_manager import get_pattern_metadata
-    import asyncio
-    from concurrent.futures import ThreadPoolExecutor
-    
-    # Run the blocking file listing in a thread
-    files = await asyncio.to_thread(pattern_manager.list_theta_rho_files)
-    files_with_metadata = []
+    import json
 
-    # Use ThreadPoolExecutor for I/O-bound operations
-    executor = ThreadPoolExecutor(max_workers=4)
-    
-    def process_file(file_path):
-        """Process a single file and return its metadata."""
-        try:
-            full_path = os.path.join(pattern_manager.THETA_RHO_DIR, file_path)
-            
-            # Get file stats
-            file_stat = os.stat(full_path)
-            
-            # Get cached metadata (this should be fast if cached)
-            metadata = get_pattern_metadata(file_path)
-            
-            # Extract full folder path from file path
-            path_parts = file_path.split('/')
-            if len(path_parts) > 1:
-                # Get everything except the filename (join all folder parts)
-                category = '/'.join(path_parts[:-1])
-            else:
-                category = 'root'
-            
-            # Get file name without extension
-            file_name = os.path.splitext(os.path.basename(file_path))[0]
-            
-            # Use modification time (mtime) for "date modified"
-            date_modified = file_stat.st_mtime
-            
-            return {
-                'path': file_path,
-                'name': file_name,
-                'category': category,
-                'date_modified': date_modified,
-                'coordinates_count': metadata.get('total_coordinates', 0) if metadata else 0
-            }
-            
-        except Exception as e:
-            logger.warning(f"Error getting metadata for {file_path}: {str(e)}")
-            # Include file with minimal info if metadata fails
-            path_parts = file_path.split('/')
-            if len(path_parts) > 1:
-                category = '/'.join(path_parts[:-1])
-            else:
-                category = 'root'
-            return {
-                'path': file_path,
-                'name': os.path.splitext(os.path.basename(file_path))[0],
-                'category': category,
-                'date_modified': 0,
-                'coordinates_count': 0
-            }
-    
-    # Load the entire metadata cache at once (async)
-    # This is much faster than 1000+ individual metadata lookups
+    files = await asyncio.to_thread(pattern_manager.board_catalog)
+
+    # Load the whole metadata cache once — far faster than per-file lookups.
     try:
-        import json
-        metadata_cache_path = "metadata_cache.json"
-        # Use async file reading to avoid blocking the event loop
-        cache_data = await asyncio.to_thread(lambda: json.load(open(metadata_cache_path, 'r')))
-        cache_dict = cache_data.get('data', {})
-        logger.debug(f"Loaded metadata cache with {len(cache_dict)} entries")
-
-        # Process all files using cached data only
-        for file_path in files:
-            try:
-                # Extract category from path
-                path_parts = file_path.split('/')
-                category = '/'.join(path_parts[:-1]) if len(path_parts) > 1 else 'root'
-
-                # Get file name without extension
-                file_name = os.path.splitext(os.path.basename(file_path))[0]
-
-                # Get metadata from cache
-                cached_entry = cache_dict.get(file_path, {})
-                if isinstance(cached_entry, dict) and 'metadata' in cached_entry:
-                    metadata = cached_entry['metadata']
-                    coords_count = metadata.get('total_coordinates', 0)
-                    date_modified = cached_entry.get('mtime', 0)
-                else:
-                    coords_count = 0
-                    date_modified = 0
-
-                files_with_metadata.append({
-                    'path': file_path,
-                    'name': file_name,
-                    'category': category,
-                    'date_modified': date_modified,
-                    'coordinates_count': coords_count
-                })
-
-            except Exception as e:
-                logger.warning(f"Error processing {file_path}: {e}")
-                # Include file with minimal info if processing fails
-                path_parts = file_path.split('/')
-                category = '/'.join(path_parts[:-1]) if len(path_parts) > 1 else 'root'
-                files_with_metadata.append({
-                    'path': file_path,
-                    'name': os.path.splitext(os.path.basename(file_path))[0],
-                    'category': category,
-                    'date_modified': 0,
-                    'coordinates_count': 0
-                })
-
+        cache_data = await asyncio.to_thread(
+            lambda: json.load(open("metadata_cache.json", "r")))
+        cache_dict = cache_data.get("data", {})
     except Exception as e:
-        logger.error(f"Failed to load metadata cache, falling back to slow method: {e}")
-        # Fallback to original method if cache loading fails
-        # Create tasks only when needed
-        loop = asyncio.get_running_loop()
-        tasks = [loop.run_in_executor(executor, process_file, file_path) for file_path in files]
+        logger.debug(f"No local metadata cache to join ({e}); serving paths only")
+        cache_dict = {}
 
-        for task in asyncio.as_completed(tasks):
-            try:
-                result = await task
-                files_with_metadata.append(result)
-            except Exception as task_error:
-                logger.error(f"Error processing file: {str(task_error)}")
+    # Local metadata is keyed by local path; board paths differ, so join by name.
+    name_index = await asyncio.to_thread(pattern_manager.build_local_name_index)
 
-    # Clean up executor
-    executor.shutdown(wait=False)
+    def _entry(file_path):
+        parts = file_path.split("/")
+        category = "/".join(parts[:-1]) if len(parts) > 1 else "root"
+        local_rel = pattern_manager.resolve_local_path(file_path, name_index)
+        cached = cache_dict.get(local_rel, {}) if local_rel else {}
+        if isinstance(cached, dict) and "metadata" in cached:
+            coords_count = cached["metadata"].get("total_coordinates", 0)
+            date_modified = cached.get("mtime", 0)
+        else:
+            coords_count, date_modified = 0, 0
+        return {
+            "path": file_path,
+            "name": os.path.splitext(os.path.basename(file_path))[0],
+            "category": category,
+            "date_modified": date_modified,
+            "coordinates_count": coords_count,
+        }
 
-    return files_with_metadata
+    return [_entry(f) for f in files]
 
 @app.post("/upload_theta_rho")
 async def upload_theta_rho(file: UploadFile = File(...)):
@@ -1873,10 +1763,11 @@ async def get_theta_rho_coordinates(request: GetCoordinatesRequest):
                     "total_points": len(state._current_coordinates)
                 }
 
-        # Check file existence asynchronously
-        exists = await asyncio.to_thread(os.path.exists, file_path)
-        if not exists:
+        # Resolve to a local file by name (board path != local folder layout).
+        local_rel = await asyncio.to_thread(pattern_manager.resolve_local_path, file_name)
+        if not local_rel:
             raise HTTPException(status_code=404, detail=f"File {file_name} not found")
+        file_path = os.path.join(THETA_RHO_DIR, local_rel)
 
         # Parse the theta-rho file in a thread (not process) to avoid memory pressure
         # on resource-constrained devices like Pi Zero 2W
@@ -1905,9 +1796,11 @@ async def run_theta_rho(request: ThetaRhoRequest):
 
     normalized_file_name = normalize_file_path(request.file_name)
     file_path = os.path.join(pattern_manager.THETA_RHO_DIR, normalized_file_name)
-    if not os.path.exists(file_path):
-        logger.error(f'Theta-rho file not found: {file_path}')
-        raise HTTPException(status_code=404, detail="File not found")
+    # The board owns the catalog; validate against it, not the local FS (a
+    # board pattern need not exist locally — local files are only preview assets).
+    if not pattern_manager.is_on_board(normalized_file_name):
+        logger.error(f'Pattern not on the connected board: {normalized_file_name}')
+        raise HTTPException(status_code=404, detail="Pattern not on the connected board")
 
     if not (state.conn.is_connected() if state.conn else False):
         logger.warning("Attempted to run a pattern without a connection")
@@ -2070,8 +1963,8 @@ async def recover_sensor_homing(request: SensorHomingRecoveryRequest):
 @app.post("/run_theta_rho_file/{file_name}")
 async def run_specific_theta_rho_file(file_name: str):
     file_path = os.path.join(pattern_manager.THETA_RHO_DIR, file_name)
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found")
+    if not pattern_manager.is_on_board(file_name):
+        raise HTTPException(status_code=404, detail="Pattern not on the connected board")
 
     if not (state.conn.is_connected() if state.conn else False):
         logger.warning("Attempted to run a pattern without a connection")
@@ -2179,31 +2072,29 @@ async def preview_thr(request: DeleteFileRequest):
 
     # Normalize file path for cross-platform compatibility
     normalized_file_name = normalize_file_path(request.file_name)
-    # Construct the full path to the pattern file to check existence
-    pattern_file_path = os.path.join(pattern_manager.THETA_RHO_DIR, normalized_file_name)
-
-    # Check file existence asynchronously
-    exists = await asyncio.to_thread(os.path.exists, pattern_file_path)
-    if not exists:
-        logger.error(f"Attempted to preview non-existent pattern file: {pattern_file_path}")
+    # Resolve to a local preview asset by name (board path != local layout).
+    local_rel = await asyncio.to_thread(pattern_manager.resolve_local_path, normalized_file_name)
+    if not local_rel:
+        logger.debug(f"No local preview asset for board pattern: {request.file_name}")
         raise HTTPException(status_code=404, detail="Pattern file not found")
+    pattern_file_path = os.path.join(pattern_manager.THETA_RHO_DIR, local_rel)
 
     try:
-        cache_path = get_cache_path(normalized_file_name)
+        cache_path = get_cache_path(local_rel)
 
         # Check cache existence asynchronously
         cache_exists = await asyncio.to_thread(os.path.exists, cache_path)
         if not cache_exists:
             logger.info(f"Cache miss for {request.file_name}. Generating preview...")
             # Attempt to generate the preview if it's missing
-            success = await generate_image_preview(normalized_file_name)
+            success = await generate_image_preview(local_rel)
             cache_exists_after = await asyncio.to_thread(os.path.exists, cache_path)
             if not success or not cache_exists_after:
                 logger.error(f"Failed to generate or find preview for {request.file_name} after attempting generation.")
                 raise HTTPException(status_code=500, detail="Failed to generate preview image.")
 
         # Try to get coordinates from metadata cache first
-        metadata = get_pattern_metadata(normalized_file_name)
+        metadata = get_pattern_metadata(local_rel)
         if metadata:
             first_coord_obj = metadata.get('first_coordinate')
             last_coord_obj = metadata.get('last_coordinate')
@@ -3206,6 +3097,10 @@ async def preview_thr_batch(request: dict):
         "Content-Type": "application/json"
     }
 
+    # Board patterns are matched to a local preview asset by name (their SD path
+    # need not match the local folder layout). Build the name index once.
+    name_index = await asyncio.to_thread(pattern_manager.build_local_name_index)
+
     async def process_single_file(file_name):
         """Process a single file and return its preview data."""
         # Check in-memory cache first (for current and next playing patterns)
@@ -3223,27 +3118,27 @@ async def preview_thr_batch(request: dict):
             try:
                 # Normalize file path for cross-platform compatibility
                 normalized_file_name = normalize_file_path(file_name)
-                pattern_file_path = os.path.join(pattern_manager.THETA_RHO_DIR, normalized_file_name)
-
-                # Check file existence asynchronously
-                exists = await asyncio.to_thread(os.path.exists, pattern_file_path)
-                if not exists:
-                    logger.warning(f"Pattern file not found: {pattern_file_path}")
+                # Find the local preview asset by name (board path != local layout).
+                local_rel = await asyncio.to_thread(
+                    pattern_manager.resolve_local_path, normalized_file_name, name_index)
+                if not local_rel:
+                    logger.debug(f"No local preview asset for board pattern: {file_name}")
                     return file_name, {"error": "Pattern file not found"}
+                pattern_file_path = os.path.join(pattern_manager.THETA_RHO_DIR, local_rel)
 
-                cache_path = get_cache_path(normalized_file_name)
+                cache_path = get_cache_path(local_rel)
 
                 # Check cache existence asynchronously
                 cache_exists = await asyncio.to_thread(os.path.exists, cache_path)
                 if not cache_exists:
                     logger.info(f"Cache miss for {file_name}. Generating preview...")
-                    success = await generate_image_preview(normalized_file_name)
+                    success = await generate_image_preview(local_rel)
                     cache_exists_after = await asyncio.to_thread(os.path.exists, cache_path)
                     if not success or not cache_exists_after:
                         logger.error(f"Failed to generate or find preview for {file_name}")
                         return file_name, {"error": "Failed to generate preview"}
 
-                metadata = get_pattern_metadata(normalized_file_name)
+                metadata = get_pattern_metadata(local_rel)
                 if metadata:
                     first_coord_obj = metadata.get('first_coordinate')
                     last_coord_obj = metadata.get('last_coordinate')

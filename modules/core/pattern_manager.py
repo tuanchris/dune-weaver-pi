@@ -318,7 +318,73 @@ async def start_idle_led_timeout(check_still_sands: bool = True):
     )
 
 
+def build_local_name_index():
+    """Map ``basename -> local relative path`` for the ./patterns library.
+
+    Board manifest paths (the catalog) don't match the host's local folder
+    layout — the same pattern can sit at ``holiday/star.thr`` locally but
+    ``star.thr`` on the board's SD. Previews render from local files, so we look
+    them up by name, not path. Ambiguous basenames resolve to the first sorted
+    match (a preview is cosmetic; any same-named file is close enough).
+    """
+    index = {}
+    for rel in sorted(list_theta_rho_files()):
+        index.setdefault(os.path.basename(rel), rel)
+    return index
+
+
+def resolve_local_path(file_path, index=None):
+    """Local relative path of a pattern's preview asset, or None if we have none.
+
+    Exact path first (fast, unambiguous), then a basename match against the
+    local library. ``index`` lets a batch reuse one built index; single lookups
+    build it on demand.
+    """
+    rel = _host_rel_path(file_path)
+    if os.path.exists(os.path.join(THETA_RHO_DIR, rel)):
+        return rel
+    index = index if index is not None else build_local_name_index()
+    return index.get(os.path.basename(rel))
+
+
+def board_catalog():
+    """Pattern paths on the connected board — the app's display catalog.
+
+    The board's SD is the source of truth for which patterns exist; this reads
+    the per-board manifest cached on connect (modules/core/board_cache). Paths
+    are relative to /patterns (e.g. 'custom/x.thr'), matching what $SD/Run and
+    the local preview lookup expect. Empty when no board has been synced yet.
+    """
+    from modules.core import board_cache
+    return board_cache.load_manifest().get("patterns", [])
+
+
+def board_catalog_set():
+    """board_catalog() as a normalized set for membership tests."""
+    return {str(p).replace("\\", "/").lstrip("/") for p in board_catalog()}
+
+
+def is_on_board(file_path) -> bool:
+    """Whether a pattern is in the connected board's catalog.
+
+    Compares the patterns-relative form against the cached manifest. Returns
+    True when the manifest is empty (board never synced) so we defer to the
+    board rather than blocking a play on a stale/absent cache.
+    """
+    catalog = board_catalog_set()
+    if not catalog:
+        return True
+    return _host_rel_path(file_path) in catalog
+
+
 def list_theta_rho_files():
+    """Scan the host's local ./patterns library.
+
+    This is now only a *preview asset* source (thumbnails + the live-playback
+    canvas render locally from these files) — the browsable catalog comes from
+    the board via board_catalog(). A pattern with no local file simply has no
+    preview.
+    """
     files = []
     for root, dirs, filenames in os.walk(THETA_RHO_DIR):
         # Skip cached_images directories to avoid scanning thousands of WebP files

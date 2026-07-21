@@ -34,14 +34,23 @@ logger = logging.getLogger(__name__)
 _RETRY_503_ATTEMPTS = 3      # total tries (1 initial + 2 retries)
 _RETRY_503_BASE = 0.3        # seconds; base for exponential backoff + jitter
 
+# The board's single-threaded web server can legitimately take many seconds to
+# answer /sand_status while it is busy behind a file transfer or streaming a
+# pattern (one table was seen answering in 2.3s, 14s, 0.1s back-to-back). A tight
+# timeout makes a busy-but-alive board look offline, so status reads get a
+# generous ceiling and reachability is decided over several tries, not one.
+STATUS_TIMEOUT = 15.0        # seconds; ceiling for a single /sand_status read
+_REACHABLE_ATTEMPTS = 3      # consecutive status failures before "offline"
+_REACHABLE_BACKOFF = 1.0     # seconds; base for exponential backoff + jitter
+
 
 def _pin_ipv4(base_url: str) -> str:
     """Rewrite a hostname base URL to its numeric IPv4 address.
 
     The boards publish no AAAA record over mDNS, and a dual-stack getaddrinfo
-    for a ``.local`` name stalls ~5s waiting for the IPv6 answer — longer than
-    the 3s status timeout, so every poll would die in name resolution. Resolve
-    the A record once here (milliseconds) and pin it; clients are rebuilt on
+    for a ``.local`` name stalls ~5s waiting for the IPv6 answer on every poll —
+    a per-request tax that resolving the A record once here (milliseconds) and
+    pinning it avoids entirely. Clients are rebuilt on
     every connect/relocate, so a DHCP move is still handled by the watchdog.
     Unresolvable hosts pass through unchanged for reachable() to report.
     """
@@ -118,15 +127,38 @@ class FluidNCClient:
     def close(self) -> None:
         self._connected = False
 
-    def reachable(self) -> bool:
-        """True if the board answers a status read. Also updates is_connected()."""
-        try:
-            self._get("/sand_status", timeout=3.0)
-            self._connected = True
-            self.locked = False
-        except Exception as e:
-            logger.debug(f"Board unreachable at {self.base_url}: {e}")
-            self._connected = False
+    def reachable(self, attempts: int = _REACHABLE_ATTEMPTS,
+                  backoff: float = _REACHABLE_BACKOFF) -> bool:
+        """True if the board answers a status read. Also updates is_connected().
+
+        A single missed status read is not proof the board is gone: its
+        single-threaded web server can be busy behind a file transfer or a
+        pattern stream. So we probe up to ``attempts`` times with exponential
+        backoff + jitter and only report offline after all of them fail. A 401
+        (locked) is definitive — we stop retrying and let the caller surface it.
+        A genuinely absent board fails fast (connection refused / no route), so
+        these retries cost real time only against a busy-but-alive board, which
+        is exactly the case we want to wait out.
+        """
+        last_err: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                self._get("/sand_status", timeout=STATUS_TIMEOUT)
+                self._connected = True
+                self.locked = False
+                return True
+            except Exception as e:
+                last_err = e
+                if self.locked:  # 401 — retrying won't help
+                    break
+                if attempt < attempts - 1:
+                    delay = backoff * (2 ** attempt) + random.uniform(0, backoff)
+                    logger.debug(
+                        f"Board status probe {attempt + 1}/{attempts} failed at "
+                        f"{self.base_url}; retrying in {delay:.1f}s: {e}")
+                    time.sleep(delay)
+        logger.debug(f"Board unreachable at {self.base_url} after {attempts} tries: {last_err}")
+        self._connected = False
         return self._connected
 
     # -- API password ($Sand/Password, fw >= v0.1.11) --------------------------
@@ -154,16 +186,17 @@ class FluidNCClient:
     def get_status(self) -> dict:
         """The board's /sand_status object (schema in API.md).
 
-        Generous timeout: the board's single-threaded web server serializes
-        requests, so /sand_status legitimately waits several seconds behind a
-        file transfer or while streaming a pattern (one table was seen answering
-        in 2.3s, 14s, 0.1s back-to-back mid-pattern). A tight timeout makes a
-        busy-but-alive board look offline and burns the observer's OFFLINE_GRACE
-        (3 polls); keep it long so a slow poll succeeds instead of counting as a
-        failure. Runs in a worker thread (observer uses asyncio.to_thread), so a
-        slow read never blocks the event loop. Mirrors the DW mobile app.
+        Generous timeout (STATUS_TIMEOUT): the board's single-threaded web server
+        serializes requests, so /sand_status legitimately waits several seconds
+        behind a file transfer or while streaming a pattern (one table was seen
+        answering in 2.3s, 14s, 0.1s back-to-back mid-pattern). A tight timeout
+        makes a busy-but-alive board look offline and burns the observer's
+        OFFLINE_GRACE (3 polls); keep it long so a slow poll succeeds instead of
+        counting as a failure. Runs in a worker thread (observer uses
+        asyncio.to_thread), so a slow read never blocks the event loop. Mirrors
+        the DW mobile app.
         """
-        return self._get("/sand_status", timeout=12.0).json()
+        return self._get("/sand_status", timeout=STATUS_TIMEOUT).json()
 
     def get_bootlog(self) -> str:
         """Plain-text boot log ($SS startup log). After a panic reset it still
@@ -185,6 +218,31 @@ class FluidNCClient:
 
     def list_patterns(self) -> list:
         return self._get("/sand_patterns").json()
+
+    def get_patterns_manifest(self, etag: str | None = None) -> tuple[str | None, list | None]:
+        """Fetch the pattern catalog with conditional revalidation.
+
+        The firmware serves the ``/patterns/index.json`` manifest from
+        ``/sand_patterns`` with an ``ETag``; sending the cached tag back as
+        ``If-None-Match`` lets an unchanged catalog answer ``304 Not Modified``
+        with no body instead of re-streaming the whole ~1000-file list (which,
+        colliding with a launch/reconnect burst, is what pushes the heap-tight
+        board into low-memory shedding — firmware API.md). Returns
+        ``(etag, patterns)``: on **304** ``(etag_in, None)`` = unchanged, keep
+        the cache; on **200** ``(new_etag, [...])``. The live-listing fallback
+        (no manifest on the SD) carries no ETag and always answers 200.
+        """
+        headers = self._headers()
+        if etag:
+            headers = {**headers, "If-None-Match": etag}
+        r = self._send_with_retry("GET", self.base_url + "/sand_patterns",
+                                  timeout=self.timeout, headers=headers)
+        if r.status_code == 401:
+            self.locked = True
+        if r.status_code == 304:
+            return etag, None
+        r.raise_for_status()
+        return r.headers.get("ETag"), r.json()
 
     def list_playlists(self) -> list:
         return self._get("/sand_playlists").json()

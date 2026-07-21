@@ -39,3 +39,4 @@ frontend/test-results/
 
 # Runtime artifacts
 board_log.txt
+board_cache/

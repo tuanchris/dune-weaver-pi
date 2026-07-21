@@ -204,12 +204,11 @@ async def run_pattern(file_path: str, clear_pattern: str = "none") -> None:
     aborts any current job first)."""
     global current_run
     conn = _require_conn()
-    from modules.core.pattern_manager import _ensure_on_board, make_sd_path_resolver
+    from modules.core.pattern_manager import _to_sd_path
 
-    # Prefer a copy already on the board SD over uploading a duplicate.
-    resolve_sd = make_sd_path_resolver(conn)
-    sd_path = await asyncio.to_thread(resolve_sd, file_path)
-    await asyncio.to_thread(_ensure_on_board, file_path, sd_path)
+    # The pattern already lives on the board (the app plays from the board's own
+    # catalog and never uploads on play); the SD path is derived directly.
+    sd_path = _to_sd_path(file_path)
     try:
         await asyncio.to_thread(conn.set_feed, int(state.speed))
     except Exception as e:
@@ -414,6 +413,7 @@ def translate_status(st: Optional[dict], obs: Optional["BoardObserver"] = None,
             "firmware_version": state.firmware_version,
             "table_type": None,
             "health": _board_health(None),
+            "catalog_version": getattr(state, "catalog_version", 0),
         }
 
     pl = st.get("playlist") or {}
@@ -503,6 +503,9 @@ def translate_status(st: Optional[dict], obs: Optional["BoardObserver"] = None,
         "firmware_version": st.get("fw") or state.firmware_version,
         "table_type": None,
         "health": _board_health(st),
+        # Bumped whenever the board's cached catalog (patterns/playlists) is
+        # re-synced, so the frontend refetches the list without a manual reload.
+        "catalog_version": getattr(state, "catalog_version", 0),
     }
 
 

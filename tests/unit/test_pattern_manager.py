@@ -168,6 +168,34 @@ not a number here
         assert coordinates == []
 
 
+class TestResolveLocalPath:
+    """Board pattern paths -> local preview asset (exact path, then by name)."""
+
+    def test_exact_path_match(self, tmp_path):
+        patterns_dir = tmp_path / "patterns"
+        (patterns_dir / "custom").mkdir(parents=True)
+        (patterns_dir / "custom" / "star.thr").write_text("0 0.5")
+        with patch("modules.core.pattern_manager.THETA_RHO_DIR", str(patterns_dir)):
+            from modules.core import pattern_manager
+            assert pattern_manager.resolve_local_path("custom/star.thr") == "custom/star.thr"
+
+    def test_basename_match_when_layout_differs(self, tmp_path):
+        # Board serves it at the root; locally it lives under a folder.
+        patterns_dir = tmp_path / "patterns"
+        (patterns_dir / "holiday").mkdir(parents=True)
+        (patterns_dir / "holiday" / "star.thr").write_text("0 0.5")
+        with patch("modules.core.pattern_manager.THETA_RHO_DIR", str(patterns_dir)):
+            from modules.core import pattern_manager
+            assert pattern_manager.resolve_local_path("star.thr") == "holiday/star.thr"
+
+    def test_no_local_asset_returns_none(self, tmp_path):
+        patterns_dir = tmp_path / "patterns"
+        patterns_dir.mkdir()
+        with patch("modules.core.pattern_manager.THETA_RHO_DIR", str(patterns_dir)):
+            from modules.core import pattern_manager
+            assert pattern_manager.resolve_local_path("nope.thr") is None
+
+
 class TestListThetaRhoFiles:
     """Tests for list_theta_rho_files function."""
 

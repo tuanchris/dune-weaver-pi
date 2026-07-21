@@ -9,7 +9,7 @@ import {
   savePreviewToCache,
 } from '@/lib/previewCache'
 import { fuzzyMatch } from '@/lib/utils'
-import { useOnBackendConnected } from '@/hooks/useBackendConnection'
+import { useOnBackendConnected, useOnCatalogChanged } from '@/hooks/useBackendConnection'
 import type { PatternMetadata, PreviewData, SortOption, PreExecution, RunMode } from '@/lib/types'
 import { preExecutionOptions } from '@/lib/types'
 import { Button } from '@/components/ui/button'
@@ -206,6 +206,14 @@ export function PlaylistsPage() {
 
   // Refetch when backend reconnects
   useOnBackendConnected(() => {
+    fetchPlaylists()
+    fetchAllPatterns()
+    loadFavorites()
+  })
+
+  // Refetch when the board's catalog finishes syncing (or changes) — the
+  // connect-time fetch above can beat the backend's background cache fill.
+  useOnCatalogChanged(() => {
     fetchPlaylists()
     fetchAllPatterns()
     loadFavorites()

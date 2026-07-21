@@ -9,7 +9,6 @@ import {
 } from '@/lib/previewCache'
 import { fuzzyMatch } from '@/lib/utils'
 import { apiClient } from '@/lib/apiClient'
-import { useOnBackendConnected } from '@/hooks/useBackendConnection'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -66,6 +65,7 @@ export function BrowsePage() {
   const [patterns, setPatterns] = useState<PatternMetadata[]>([])
   const [previews, setPreviews] = useState<Record<string, PreviewData>>({})
   const [isLoading, setIsLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
   // Filter/sort state
   const [searchQuery, setSearchQuery] = useState('')
@@ -185,11 +185,9 @@ export function BrowsePage() {
     }
   }, [])
 
-  // Refetch when backend reconnects
-  useOnBackendConnected(() => {
-    fetchPatterns()
-    loadFavorites()
-  })
+  // No automatic refetch on reconnect or catalog change: the board's manifest
+  // is cached backend-side, so the mount fetch above (backend boot / page load)
+  // is enough. The user pulls fresh patterns on demand via the refresh button.
 
   // Load favorites from "Favorites" playlist
   const loadFavorites = async () => {
@@ -234,8 +232,11 @@ export function BrowsePage() {
     }
   }
 
-  const fetchPatterns = async () => {
-    setIsLoading(true)
+  // silent: keep the current grid on screen and spin only the refresh button
+  // (manual refresh); non-silent shows the full-screen loader (initial load).
+  const fetchPatterns = async (silent = false) => {
+    if (silent) setIsRefreshing(true)
+    else setIsLoading(true)
     try {
       // Fetch patterns and history in parallel
       const [data, historyData] = await Promise.all([
@@ -279,8 +280,13 @@ export function BrowsePage() {
       console.error('Error fetching patterns:', error)
       toast.error('Failed to load patterns')
     } finally {
-      setIsLoading(false)
+      if (silent) setIsRefreshing(false)
+      else setIsLoading(false)
     }
+  }
+
+  const handleRefresh = async () => {
+    await Promise.all([fetchPatterns(true), loadFavorites()])
   }
 
   const fetchPreviewsBatch = async (filePaths: string[]) => {
@@ -886,21 +892,35 @@ export function BrowsePage() {
             {patterns.length} patterns available
           </p>
         </div>
-        {!isPlayOnlyActive && (
+        <div className="flex items-center gap-2 shrink-0">
           <Button
             variant="ghost"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isUploading}
-            className="gap-2 shrink-0 h-9 w-9 sm:h-11 sm:w-auto rounded-full px-0 sm:px-4 justify-center bg-card border border-border shadow-sm hover:bg-accent"
+            size="icon"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            title="Refresh patterns"
+            className="shrink-0 h-9 w-9 sm:h-11 sm:w-11 rounded-full bg-card border border-border shadow-sm hover:bg-accent"
           >
-            {isUploading ? (
-              <span className="material-icons-outlined animate-spin text-lg">sync</span>
-            ) : (
-              <span className="material-icons-outlined text-lg">add</span>
-            )}
-            <span className="hidden sm:inline">Add Pattern</span>
+            <span className={`material-icons-outlined text-lg ${isRefreshing ? 'animate-spin' : ''}`}>
+              {isRefreshing ? 'sync' : 'refresh'}
+            </span>
           </Button>
-        )}
+          {!isPlayOnlyActive && (
+            <Button
+              variant="ghost"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
+              className="gap-2 shrink-0 h-9 w-9 sm:h-11 sm:w-auto rounded-full px-0 sm:px-4 justify-center bg-card border border-border shadow-sm hover:bg-accent"
+            >
+              {isUploading ? (
+                <span className="material-icons-outlined animate-spin text-lg">sync</span>
+              ) : (
+                <span className="material-icons-outlined text-lg">add</span>
+              )}
+              <span className="hidden sm:inline">Add Pattern</span>
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Filter Bar */}

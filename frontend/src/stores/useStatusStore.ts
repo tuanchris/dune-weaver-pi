@@ -43,6 +43,10 @@ export interface StatusData {
   current_rho: number
   firmware_version: string | null
   table_type: string | null
+  // Bumped by the backend whenever the connected board's cached catalog
+  // (patterns/playlists) is re-synced. The frontend watches it to refetch the
+  // lists without a manual page reload.
+  catalog_version?: number
   // Board health telemetry from /sand_status (firmware API.md). Fields are
   // null on older firmware that doesn't report them.
   health?: {
@@ -72,6 +76,10 @@ export const useStatusStore = create<StatusStore>()(() => ({
 let ws: WebSocket | null = null
 let reconnectTimeout: ReturnType<typeof setTimeout> | null = null
 let isStopped = false
+// Last catalog_version seen on the status stream. When it changes the board's
+// pattern/playlist catalog was (re)synced, so pages refetch. null = not yet
+// seen (also reset on table switch) so the first value never looks like a change.
+let lastCatalogVersion: number | null = null
 
 function connectWebSocket() {
   if (isStopped) return
@@ -101,6 +109,20 @@ function connectWebSocket() {
       const data = JSON.parse(event.data)
       if (data.type === 'status_update' && data.data) {
         useStatusStore.setState({ status: data.data })
+        const version = data.data.catalog_version
+        if (typeof version === 'number') {
+          // Refetch when the catalog changed. On the FIRST observation, a
+          // non-zero version means a sync already completed — possibly after
+          // the connect-time fetch read an empty catalog — so refetch to be
+          // safe; a zero baseline (no sync yet) just primes and the later
+          // 0 -> 1 bump fires.
+          const changed =
+            lastCatalogVersion === null ? version > 0 : version !== lastCatalogVersion
+          lastCatalogVersion = version
+          if (changed) {
+            window.dispatchEvent(new CustomEvent('catalog-changed'))
+          }
+        }
       }
     } catch {
       // Ignore parse errors
@@ -167,6 +189,12 @@ useStatusStore.subscribe((state) => {
 // Reset wasPlaying on table switch so we don't fire false transitions
 apiClient.onBaseUrlChange(() => {
   wasPlaying = null
+})
+
+// Reset the catalog baseline on table switch: the new board's version is
+// unrelated to the old one, so re-prime rather than fire a spurious change.
+apiClient.onBaseUrlChange(() => {
+  lastCatalogVersion = null
 })
 
 // For HMR / cleanup in tests
