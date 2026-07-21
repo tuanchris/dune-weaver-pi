@@ -37,6 +37,11 @@ describe('BrowsePage', () => {
 
       renderWithProviders(<BrowsePage />)
 
+      // On boot an empty response is treated as "catalog not ready yet" and the
+      // loader is held. Once the backend signals the catalog is ready, a
+      // genuinely empty catalog resolves to the empty state.
+      window.dispatchEvent(new CustomEvent('catalog-changed'))
+
       await waitFor(() => {
         expect(screen.getByText(/no patterns found/i)).toBeInTheDocument()
       })

@@ -9,6 +9,7 @@ import {
 } from '@/lib/previewCache'
 import { fuzzyMatch } from '@/lib/utils'
 import { apiClient } from '@/lib/apiClient'
+import { useOnCatalogChanged } from '@/hooks/useBackendConnection'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -113,6 +114,12 @@ export function BrowsePage() {
   const pendingPreviewsRef = useRef<Set<string>>(new Set())
   const batchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
+  // True once the initial catalog has loaded. Until then the catalog-ready
+  // signal drives a one-time boot catch-up; after, updates are manual only.
+  const bootReadyRef = useRef(false)
+  // Fallback timer that releases the held boot loader if the catalog-ready
+  // signal never arrives (e.g. status stream down).
+  const bootFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Cache all previews state
   const [isCaching, setIsCaching] = useState(false)
@@ -163,20 +170,36 @@ export function BrowsePage() {
     localStorage.setItem('preExecution', preExecution)
   }, [preExecution])
 
-  // Initialize IndexedDB cache and fetch patterns on mount
+  // Initialize IndexedDB cache and fetch patterns on mount. On a cold boot the
+  // backend's manifest sync runs in the background, so this fetch can beat it
+  // and read an empty catalog — hold the loader and let the catalog-ready
+  // listener below finish the boot rather than flashing an empty state.
   useEffect(() => {
-    initPreviewCacheDB().then(() => {
-      fetchPatterns()
-    }).catch(() => {
-      // Continue even if IndexedDB fails - just won't have persistent cache
-      fetchPatterns()
-    })
+    const boot = async () => {
+      const count = await fetchPatterns(false, true)
+      if (count > 0) {
+        bootReadyRef.current = true
+      } else {
+        // Empty boot holds the loader for the catalog-ready signal; don't wait
+        // forever if it never comes — release after 20s and show what we have.
+        bootFallbackRef.current = setTimeout(() => {
+          if (!bootReadyRef.current) {
+            bootReadyRef.current = true
+            setIsLoading(false)
+          }
+        }, 20000)
+      }
+    }
+    initPreviewCacheDB().then(boot).catch(boot)
     loadFavorites()
 
     // Cleanup on unmount: abort in-flight requests and clear pending queue
     return () => {
       if (batchTimeoutRef.current) {
         clearTimeout(batchTimeoutRef.current)
+      }
+      if (bootFallbackRef.current) {
+        clearTimeout(bootFallbackRef.current)
       }
       if (abortControllerRef.current) {
         abortControllerRef.current.abort()
@@ -185,9 +208,21 @@ export function BrowsePage() {
     }
   }, [])
 
-  // No automatic refetch on reconnect or catalog change: the board's manifest
-  // is cached backend-side, so the mount fetch above (backend boot / page load)
-  // is enough. The user pulls fresh patterns on demand via the refresh button.
+  // First connect only: the backend bumps catalog_version once its background
+  // manifest sync finishes. Until we've loaded once, treat that as "manifest
+  // ready" and do the boot fetch (clearing the held loader even for an empty
+  // board). After the initial load we ignore it — updates are manual via the
+  // refresh button, so a mid-session re-sync never blanks the grid.
+  useOnCatalogChanged(() => {
+    if (bootReadyRef.current) return
+    bootReadyRef.current = true
+    if (bootFallbackRef.current) {
+      clearTimeout(bootFallbackRef.current)
+      bootFallbackRef.current = null
+    }
+    fetchPatterns()
+    loadFavorites()
+  })
 
   // Load favorites from "Favorites" playlist
   const loadFavorites = async () => {
@@ -234,9 +269,15 @@ export function BrowsePage() {
 
   // silent: keep the current grid on screen and spin only the refresh button
   // (manual refresh); non-silent shows the full-screen loader (initial load).
-  const fetchPatterns = async (silent = false) => {
+  // holdLoaderIfEmpty: on the boot fetch, leave the loader up when the catalog
+  // comes back empty (backend manifest sync not done yet) instead of dropping
+  // to an empty state — the catalog-ready listener refetches and clears it.
+  // Returns the number of patterns loaded.
+  const fetchPatterns = async (silent = false, holdLoaderIfEmpty = false): Promise<number> => {
     if (silent) setIsRefreshing(true)
     else setIsLoading(true)
+    let count = 0
+    let ok = false
     try {
       // Fetch patterns and history in parallel
       const [data, historyData] = await Promise.all([
@@ -245,6 +286,8 @@ export function BrowsePage() {
       ])
       setPatterns(data)
       setAllPatternHistories(historyData)
+      count = data.length
+      ok = true
 
       if (data.length > 0) {
         // Sort patterns by name (default sort) before preloading
@@ -281,8 +324,13 @@ export function BrowsePage() {
       toast.error('Failed to load patterns')
     } finally {
       if (silent) setIsRefreshing(false)
-      else setIsLoading(false)
+      // Hold the full-screen loader when the boot fetch succeeded but the
+      // catalog is still empty (backend manifest sync not done): the
+      // catalog-ready listener refetches once it lands. A failed fetch (ok
+      // false) never holds — there's no manifest coming, so show the page.
+      else if (!(holdLoaderIfEmpty && ok && count === 0)) setIsLoading(false)
     }
+    return count
   }
 
   const handleRefresh = async () => {
