@@ -4,8 +4,8 @@ tracker: param clamping, key mapping, and status readback.
 """
 from unittest.mock import patch
 
-from modules.led.board_led_controller import BoardLEDController
 from modules.core.state import state
+from modules.led.board_led_controller import BoardLEDController
 
 
 class FakeConn:

@@ -11,17 +11,16 @@ serial/websocket GRBL transport, coordinate streaming, and the $H/$J homing
 handshake are gone — the firmware does all of that itself.
 """
 
-import os
-import time
-import math
-import logging
 import asyncio
+import logging
+import os
 import threading
+import time
 
-from modules.core.state import state
 from modules.connection.fluidnc_client import FluidNCClient
-from modules.led.led_interface import LEDInterface
+from modules.core.state import state
 from modules.led.idle_timeout_manager import idle_timeout_manager
+from modules.led.led_interface import LEDInterface
 
 logger = logging.getLogger(__name__)
 

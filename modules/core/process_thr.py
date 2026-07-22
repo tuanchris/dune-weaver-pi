@@ -3,6 +3,7 @@ import os
 import sys
 from pathlib import Path
 
+
 def process_file(input_path, output_path):
     """Process a single file to remove duplicate consecutive lines and round coordinates."""
     prev = None

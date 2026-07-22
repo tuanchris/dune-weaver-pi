@@ -1,15 +1,16 @@
 """Factory for creating MQTT handlers."""
+import logging
 import os
-from typing import Dict, Callable
-from dotenv import load_dotenv
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+from modules.core.state import state
+
 from .base import BaseMQTTHandler
 from .handler import MQTTHandler
 from .mock import MockMQTTHandler
 from .utils import create_mqtt_callbacks
-from modules.core.state import state
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -40,4 +41,4 @@ def create_mqtt_handler() -> BaseMQTTHandler:
         return MQTTHandler(create_mqtt_callbacks())
 
     logger.info("MQTT not enabled or not configured, instantiating MockMQTTHandler")
-    return MockMQTTHandler() 
+    return MockMQTTHandler()

@@ -8,11 +8,10 @@ fetches the catalogue over HTTP and renders each ``.thr`` preview locally
 import asyncio
 import logging
 
-from PySide6.QtCore import QAbstractListModel, Qt, Slot, QModelIndex
-from PySide6.QtQml import QmlElement
-
-from firmware_client import FirmwareClient
 import thr_preview
+from firmware_client import FirmwareClient
+from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt, Slot
+from PySide6.QtQml import QmlElement
 
 QML_IMPORT_NAME = "DuneWeaver"
 QML_IMPORT_MAJOR_VERSION = 1

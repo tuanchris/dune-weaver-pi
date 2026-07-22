@@ -1,8 +1,10 @@
-import requests
 import json
-from typing import Dict, Optional
-import time
 import logging
+import time
+from typing import Dict, Optional
+
+import requests
+
 logger = logging.getLogger(__name__)
 
 
@@ -24,17 +26,17 @@ class LEDController:
         """Send command to WLED and return status"""
         try:
             url = self._get_base_url()
-            
+
             # First check current state
             response = requests.get(f"{url}/state", timeout=2)
             response.raise_for_status()
             current_state = response.json()
-            
+
             # If WLED is off and we're trying to set something, turn it on first
             if not current_state.get('on', False) and state_params and 'on' not in state_params:
                 # Turn on power first
                 requests.post(f"{url}/state", json={"on": True}, timeout=2)
-            
+
             # Now send the actual command if there are parameters
             if state_params:
                 response = requests.post(f"{url}/state", json=state_params, timeout=2)
@@ -42,13 +44,13 @@ class LEDController:
                 response = requests.get(f"{url}/state", timeout=2)
                 response.raise_for_status()
                 current_state = response.json()
-                
+
             preset_id = current_state.get('ps', -1)
             playlist_id = current_state.get('pl', -1)
 
             # Use True as default since WLED is typically on when responding
             is_on = current_state.get('on', True)
-            
+
             return {
                 "connected": True,
                 "is_on": is_on,
@@ -107,7 +109,7 @@ class LEDController:
 
         return self._send_command({"seg": [seg]})
 
-    def set_effect(self, effect_index: int, speed: int = None, intensity: int = None, 
+    def set_effect(self, effect_index: int, speed: int = None, intensity: int = None,
                    brightness: int = None, palette: int = None,
                    # Primary color
                    r: int = None, g: int = None, b: int = None, w: int = None, hex: str = None,
@@ -155,12 +157,12 @@ class LEDController:
 
         # Build segment parameters
         seg = {"fx": effect_index}
-        
+
         if speed is not None:
             if not 0 <= speed <= 255:
                 return {"connected": False, "message": "Speed must be between 0 and 255"}
             seg["sx"] = speed
-        
+
         if intensity is not None:
             if not 0 <= intensity <= 255:
                 return {"connected": False, "message": "Intensity must be between 0 and 255"}
@@ -168,7 +170,7 @@ class LEDController:
 
         # Prepare colors array
         colors = []
-        
+
         # Add primary color
         primary = [r or 0, g or 0, b or 0]
         if w is not None:
@@ -176,7 +178,7 @@ class LEDController:
                 return {"connected": False, "message": "Primary white value must be between 0 and 255"}
             primary.append(w)
         colors.append(primary)
-        
+
         # Add secondary color if any secondary color parameter is provided
         if any(x is not None for x in [r2, g2, b2, w2, hex2]):
             secondary = [r2 or 0, g2 or 0, b2 or 0]

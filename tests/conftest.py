@@ -7,8 +7,9 @@ This file provides:
 - Mock state fixture for isolated testing
 """
 import os
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock
 
 
 def pytest_configure(config):
@@ -39,6 +40,7 @@ async def async_client():
     without starting a server.
     """
     from httpx import ASGITransport, AsyncClient
+
     from main import app
 
     async with AsyncClient(

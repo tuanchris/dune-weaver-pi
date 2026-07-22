@@ -5,8 +5,7 @@ The backend drives the board over HTTP now (no serial/GRBL transport), so these
 tests cover the FluidNCClient command/route formatting and the connection_manager
 helpers that sit on top of it. HTTP is mocked — no board required.
 """
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from modules.connection.fluidnc_client import FluidNCClient
 

@@ -1,18 +1,23 @@
-from PySide6.QtCore import QObject, Signal, Property, Slot, QTimer
-from PySide6.QtQml import QmlElement
 import asyncio
 import base64
 import json
 import logging
+import os
 import subprocess
 import threading
 import time
 from pathlib import Path
-import os
 
-from firmware_client import (FirmwareClient, LED_EFFECTS, LED_PALETTES,
-                             friendly_error, posix_tz)
 import discovery
+from firmware_client import (
+    LED_EFFECTS,
+    LED_PALETTES,
+    FirmwareClient,
+    friendly_error,
+    posix_tz,
+)
+from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
+from PySide6.QtQml import QmlElement
 
 # Configure logging
 logging.basicConfig(

@@ -11,8 +11,9 @@ Tests the following endpoints:
 - POST /add_to_playlist
 - POST /run_playlist (when disconnected)
 """
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
 
 
 class TestListAllPlaylists:

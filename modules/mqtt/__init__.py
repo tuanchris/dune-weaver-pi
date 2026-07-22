@@ -1,6 +1,7 @@
 """MQTT module for Dune Weaver application."""
-from .factory import create_mqtt_handler
 import logging
+
+from .factory import create_mqtt_handler
 
 logger = logging.getLogger(__name__)
 # Global MQTT handler instance
@@ -27,4 +28,4 @@ def cleanup_mqtt():
     global mqtt_handler
     if mqtt_handler is not None:
         mqtt_handler.stop()
-        mqtt_handler = None 
+        mqtt_handler = None

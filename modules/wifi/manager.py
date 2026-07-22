@@ -4,11 +4,10 @@ WiFi management via NetworkManager (nmcli).
 Handles scanning, connecting, and managing WiFi connections.
 """
 
-import subprocess
-import shutil
-import os
 import logging
-import asyncio
+import os
+import shutil
+import subprocess
 
 logger = logging.getLogger(__name__)
 

@@ -1,21 +1,21 @@
-import sys
-import os
 import asyncio
 import logging
-import time
+import os
 import signal
+import sys
+import time
 from pathlib import Path
-from PySide6.QtCore import QUrl, QTimer, QObject, QEvent
-from PySide6.QtGui import QGuiApplication, QFont, QFontDatabase
-from PySide6.QtQml import QQmlApplicationEngine, qmlRegisterType
-from PySide6.QtQuickControls2 import QQuickStyle
-from qasync import QEventLoop
-from dotenv import load_dotenv
 
 from backend import Backend
+from dotenv import load_dotenv
 from models.pattern_model import PatternModel
 from models.playlist_model import PlaylistModel
 from png_cache_manager import ensure_png_cache_startup
+from PySide6.QtCore import QEvent, QObject, QTimer, QUrl
+from PySide6.QtGui import QFont, QFontDatabase, QGuiApplication
+from PySide6.QtQml import QQmlApplicationEngine, qmlRegisterType
+from PySide6.QtQuickControls2 import QQuickStyle
+from qasync import QEventLoop
 
 # Load environment variables from .env file if it exists
 load_dotenv(Path(__file__).parent / ".env")
@@ -74,7 +74,7 @@ class FirstTouchFilter(QObject):
 async def startup_tasks():
     """Run async startup tasks"""
     logger.info("🚀 Starting dune-weaver-touch async initialization...")
-    
+
     # Ensure PNG cache is available for all WebP previews
     try:
         logger.info("🎨 Checking PNG preview cache...")
@@ -85,7 +85,7 @@ async def startup_tasks():
             logger.warning("⚠️ PNG cache check completed with warnings")
     except Exception as e:
         logger.error(f"❌ PNG cache check failed: {e}")
-    
+
     logger.info("✨ dune-weaver-touch startup tasks completed")
 
 def is_pi5():
@@ -125,12 +125,12 @@ def main():
     # Setup async event loop
     loop = QEventLoop(app)
     asyncio.set_event_loop(loop)
-    
+
     # Register types
     qmlRegisterType(Backend, "DuneWeaver", 1, 0, "Backend")
     qmlRegisterType(PatternModel, "DuneWeaver", 1, 0, "PatternModel")
     qmlRegisterType(PlaylistModel, "DuneWeaver", 1, 0, "PlaylistModel")
-    
+
     # Load QML
     engine = QQmlApplicationEngine()
 
@@ -143,10 +143,10 @@ def main():
 
     qml_file = Path(__file__).parent / "qml" / "main.qml"
     engine.load(QUrl.fromLocalFile(str(qml_file)))
-    
+
     if not engine.rootObjects():
         return -1
-    
+
     # Schedule startup tasks after a brief delay to ensure event loop is running
     def schedule_startup():
         try:
@@ -156,7 +156,7 @@ def main():
         except RuntimeError:
             # No running loop, create task directly
             asyncio.create_task(startup_tasks())
-    
+
     # Use QTimer to delay startup tasks
     startup_timer = QTimer()
     startup_timer.timeout.connect(schedule_startup)

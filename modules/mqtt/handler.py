@@ -1,18 +1,20 @@
 """Real MQTT handler implementation."""
+import asyncio
+import json
+import logging
 import os
 import threading
 import time
-import json
 import uuid
-from typing import Dict, Callable
-import paho.mqtt.client as mqtt
-import logging
-import asyncio
+from typing import Callable, Dict
 
-from .base import BaseMQTTHandler
-from modules.core.state import state
+import paho.mqtt.client as mqtt
+
 from modules.core.pattern_manager import list_theta_rho_files
 from modules.core.playlist_manager import list_all_playlists
+from modules.core.state import state
+
+from .base import BaseMQTTHandler
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +112,7 @@ class MQTTHandler(BaseMQTTHandler):
             "model": "Dune Weaver",
             "manufacturer": "DIY"
         }
-        
+
         # Serial State Sensor
         serial_config = {
             "name": f"{self.device_name} Serial State",
@@ -450,7 +452,7 @@ class MQTTHandler(BaseMQTTHandler):
         """Helper method to publish HA discovery configs."""
         if not self.is_enabled:
             return
-            
+
         discovery_topic = f"{self.discovery_prefix}/{component}/{self.device_id}/{config_type}/config"
         self.client.publish(discovery_topic, json.dumps(config), retain=True)
 
@@ -463,12 +465,12 @@ class MQTTHandler(BaseMQTTHandler):
                 running_state = "paused"
             else:
                 running_state = "running"
-                
+
         self.client.publish(self.running_state_topic, running_state, retain=True)
-        
+
         # Update button availability based on state
-        self.client.publish(f"{self.device_id}/command/pause/available", 
-                          "true" if running_state == "running" else "false", 
+        self.client.publish(f"{self.device_id}/command/pause/available",
+                          "true" if running_state == "running" else "false",
                           retain=True)
         self.client.publish(f"{self.device_id}/command/play/available",
                           "true" if running_state == "paused" else "false",
@@ -477,12 +479,12 @@ class MQTTHandler(BaseMQTTHandler):
         self.client.publish(f"{self.device_id}/command/skip/available",
                           "true" if running_state in ("running", "paused") and bool(self.state.current_playlist) else "false",
                           retain=True)
-                          
+
     def _publish_pattern_state(self, current_file=None):
         """Helper to publish pattern state."""
         if current_file is None:
             current_file = self.state.current_playing_file
-            
+
         if current_file:
             if current_file.startswith('./patterns/'):
                 current_file = current_file[len('./patterns/'):]
@@ -492,34 +494,34 @@ class MQTTHandler(BaseMQTTHandler):
         else:
             # Clear the pattern selection
             self.client.publish(f"{self.pattern_select_topic}/state", "None", retain=True)
-            
+
     def _publish_playlist_state(self, playlist_name=None):
         """Helper to publish playlist state."""
         if playlist_name is None:
             playlist_name = self.state.current_playlist_name
-            
+
         if playlist_name:
             self.client.publish(f"{self.playlist_select_topic}/state", playlist_name, retain=True)
         else:
             # Clear the playlist selection
             self.client.publish(f"{self.playlist_select_topic}/state", "None", retain=True)
-            
+
     def _publish_serial_state(self):
         """Helper to publish serial state."""
         serial_connected = (state.conn.is_connected() if state.conn else False)
         serial_port = state.port if serial_connected else None
         serial_status = f"connected to {serial_port}" if serial_connected else "disconnected"
         self.client.publish(self.serial_state_topic, serial_status, retain=True)
-        
+
     def _publish_progress_state(self):
         """Helper to publish completion percentage and time remaining."""
         if state.execution_progress:
             current, total, remaining_time, elapsed_time = state.execution_progress
             completion_percentage = (current / total * 100) if total > 0 else 0
-            
+
             # Publish completion percentage (rounded to 1 decimal place)
             self.client.publish(self.completion_topic, round(completion_percentage, 1), retain=True)
-            
+
             # Publish time remaining (rounded to nearest second, defaulting to 0 if None)
             time_remaining_seconds = round(remaining_time) if remaining_time is not None else 0
             self.client.publish(self.time_remaining_topic, max(0, time_remaining_seconds), retain=True)
@@ -618,12 +620,12 @@ class MQTTHandler(BaseMQTTHandler):
         # Update pattern state if current_file is provided
         if current_file is not None:
             self._publish_pattern_state(current_file)
-        
+
         # Update running state and button availability if is_running is provided
         if is_running is not None:
             running_state = "running" if is_running else "paused" if self.state.current_playing_file else "idle"
             self._publish_running_state(running_state)
-        
+
         # Update playlist state if playlist info is provided
         if playlist_name is not None:
             self._publish_playlist_state(playlist_name)
@@ -896,7 +898,7 @@ class MQTTHandler(BaseMQTTHandler):
                 self._publish_playlist_state()
                 self._publish_serial_state()
                 self._publish_progress_state()
-                
+
                 # Update speed state
                 self.client.publish(f"{self.speed_topic}/state", self.state.speed, retain=True)
 
@@ -912,7 +914,7 @@ class MQTTHandler(BaseMQTTHandler):
                     "client_id": self.client_id
                 }
                 self.client.publish(self.status_topic, json.dumps(status))
-                
+
                 # Wait for next interval
                 time.sleep(self.status_interval)
             except Exception as e:
@@ -923,23 +925,23 @@ class MQTTHandler(BaseMQTTHandler):
         """Start the MQTT handler."""
         if not self.is_enabled:
             return
-        
+
         try:
             self.client.connect(self.broker, self.port)
             self.client.loop_start()
-            
+
             # Start status publishing thread
             self.running = True
             self.status_thread = threading.Thread(target=self.publish_status, daemon=True)
             self.status_thread.start()
-            
+
             # Get initial pattern and playlist lists
             self.patterns = list_theta_rho_files()
             self.playlists = list_all_playlists()
 
             # Wait a bit for MQTT connection to establish
             time.sleep(1)
-            
+
             # Publish initial states
             self._publish_running_state()
             self._publish_pattern_state()
@@ -952,7 +954,7 @@ class MQTTHandler(BaseMQTTHandler):
 
             # Setup Home Assistant discovery
             self.setup_ha_discovery()
-            
+
             logger.info("MQTT Handler started successfully")
         except Exception as e:
             logger.error(f"Failed to start MQTT Handler: {e}")
@@ -964,7 +966,7 @@ class MQTTHandler(BaseMQTTHandler):
 
         # First stop the running flag to prevent new iterations
         self.running = False
-        
+
         # Clean up status thread
         local_status_thread = self.status_thread  # Keep a local reference
         if local_status_thread and local_status_thread.is_alive():
@@ -975,7 +977,7 @@ class MQTTHandler(BaseMQTTHandler):
             except Exception as e:
                 logger.error(f"Error joining status thread: {e}")
         self.status_thread = None
-            
+
         # Clean up MQTT client
         try:
             if hasattr(self, 'client'):
@@ -983,10 +985,10 @@ class MQTTHandler(BaseMQTTHandler):
                 self.client.disconnect()
         except Exception as e:
             logger.error(f"Error disconnecting MQTT client: {e}")
-        
+
         # Clean up main loop reference
         self.main_loop = None
-        
+
         logger.info("MQTT handler stopped")
 
     @property
@@ -1012,4 +1014,4 @@ class MQTTHandler(BaseMQTTHandler):
     @property
     def is_connected(self) -> bool:
         """Return whether MQTT client is currently connected to the broker."""
-        return self._connected and self.is_enabled 
+        return self._connected and self.is_enabled

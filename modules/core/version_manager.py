@@ -8,12 +8,13 @@ Testing overrides (environment variables):
 """
 
 import asyncio
-import aiohttp
+import logging
 import os
 import time
 from pathlib import Path
 from typing import Dict
-import logging
+
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ class VersionManager:
         self._latest_release_cache = None
         self._cache_timestamp = None
         self._cache_duration = 3600  # Cache for 1 hour (in seconds)
-        
+
     async def get_current_version(self) -> str:
         """Read current version from VERSION file (async)"""
         if self._current_version is None:
@@ -53,7 +54,7 @@ class VersionManager:
                 self._current_version = "1.0.0"
 
         return self._current_version
-    
+
     async def get_latest_release(self, force_refresh: bool = False) -> Dict[str, any]:
         """Get latest release info from GitHub API with caching"""
         # Check if we have a valid cache
@@ -106,30 +107,30 @@ class VersionManager:
             logger.error(f"Error fetching latest release: {e}")
             # Return cached data if available
             return self._latest_release_cache
-    
+
     def compare_versions(self, version1: str, version2: str) -> int:
         """Compare two semantic versions. Returns -1, 0, or 1"""
         try:
             # Parse semantic versions (e.g., "1.2.3")
             v1_parts = [int(x) for x in version1.split('.')]
             v2_parts = [int(x) for x in version2.split('.')]
-            
+
             # Pad shorter version with zeros
             max_len = max(len(v1_parts), len(v2_parts))
             v1_parts.extend([0] * (max_len - len(v1_parts)))
             v2_parts.extend([0] * (max_len - len(v2_parts)))
-            
+
             if v1_parts < v2_parts:
                 return -1
             elif v1_parts > v2_parts:
                 return 1
             else:
                 return 0
-                
+
         except (ValueError, AttributeError):
             logger.warning(f"Invalid version format: {version1} vs {version2}")
             return 0
-    
+
     async def get_version_info(self, force_refresh: bool = False) -> Dict[str, any]:
         """Get complete version information
 

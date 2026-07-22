@@ -3,9 +3,14 @@ Unified LED interface for different LED control systems
 Provides a common abstraction layer for pattern manager integration.
 """
 import asyncio
-from typing import Optional, Literal
-from modules.led.led_controller import LEDController, effect_loading as wled_loading, effect_idle as wled_idle, effect_connected as wled_connected, effect_playing as wled_playing
+from typing import Literal, Optional
+
 from modules.led.board_led_controller import BoardLEDController
+from modules.led.led_controller import LEDController
+from modules.led.led_controller import effect_connected as wled_connected
+from modules.led.led_controller import effect_idle as wled_idle
+from modules.led.led_controller import effect_loading as wled_loading
+from modules.led.led_controller import effect_playing as wled_playing
 
 LEDProviderType = Literal["wled", "board", "none"]
 

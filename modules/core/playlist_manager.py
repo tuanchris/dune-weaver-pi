@@ -1,7 +1,6 @@
 import json
-import os
 import logging
-from modules.core.state import state
+import os
 
 # Configure logging
 logger = logging.getLogger(__name__)

@@ -6,12 +6,12 @@ in memory for display in the web UI, with support for real-time streaming
 via WebSocket.
 """
 
+import asyncio
 import logging
+import threading
 from collections import deque
 from datetime import datetime
-from typing import List, Dict, Any
-import threading
-import asyncio
+from typing import Any, Dict, List
 
 
 class MemoryLogHandler(logging.Handler):

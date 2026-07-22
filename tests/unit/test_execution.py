@@ -9,11 +9,18 @@ Covers:
 - skip routing (playlist vs single pattern)
 """
 import json
-import pytest
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from modules.core import execution
-from modules.core.execution import BoardObserver, RunContext, map_clear_mode, _from_sd_path, translate_status
+from modules.core.execution import (
+    BoardObserver,
+    RunContext,
+    _from_sd_path,
+    map_clear_mode,
+    translate_status,
+)
 from modules.core.state import state
 
 
@@ -244,7 +251,7 @@ class TestObserverEdges:
         await obs.process(_status(file="/patterns/a.thr", progress=0.2), now=0.0)
         await obs.process(_status(file="/patterns/a.thr", progress=0.99), now=100.0)
         await obs.process(_status(file="/patterns/b.thr", progress=0.0), now=110.0)
-        rows = [json.loads(l) for l in log_file.read_text().splitlines()]
+        rows = [json.loads(line) for line in log_file.read_text().splitlines()]
         assert len(rows) == 1
         assert rows[0]["pattern_name"] == "a.thr"
         assert rows[0]["completed"] is True
@@ -255,7 +262,7 @@ class TestObserverEdges:
         obs = BoardObserver()
         await obs.process(_status(file="/patterns/a.thr", progress=0.3), now=0.0)
         await obs.process(_status(running=False, state="Idle", file=""), now=50.0)
-        rows = [json.loads(l) for l in log_file.read_text().splitlines()]
+        rows = [json.loads(line) for line in log_file.read_text().splitlines()]
         assert len(rows) == 1
         assert rows[0]["completed"] is False
 
@@ -266,7 +273,7 @@ class TestObserverEdges:
         await obs.process(_status(file="/patterns/a.thr", state="Hold"), now=10.0)
         await obs.process(_status(file="/patterns/a.thr", state="Run", progress=0.99), now=40.0)
         await obs.process(_status(running=False, state="Idle", file=""), now=50.0)
-        rows = [json.loads(l) for l in log_file.read_text().splitlines()]
+        rows = [json.loads(line) for line in log_file.read_text().splitlines()]
         # 50s wall clock minus 30s hold = 20s
         assert rows[0]["actual_time_seconds"] == pytest.approx(20.0, abs=0.5)
 
