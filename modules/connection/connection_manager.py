@@ -178,7 +178,13 @@ def device_init(homing=True):
         target=board_settings.sync_on_connect, args=(state.conn,), daemon=True
     ).start()
 
-    if homing and state.home_on_connect:
+    # Home only when a caller explicitly asks (e.g. sensor-homing recovery).
+    # We never auto-home just because we connected: the firmware homes itself on
+    # boot (config `startup_line0: $Sand/Home`, or the playlist-autostart
+    # fallback that requests a home when it boots unhomed). A host-side home on
+    # every connect/reconnect would needlessly re-home a table that already knows
+    # its position — e.g. after a transient reconnect or an mDNS hostname change.
+    if homing:
         home()
 
     return True

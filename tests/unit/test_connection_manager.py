@@ -72,13 +72,41 @@ class TestFluidNCClient:
 
     def test_reachable_true_and_false(self):
         client = FluidNCClient("http://board")
-        with patch("modules.connection.fluidnc_client.requests") as req:
+        with patch("modules.connection.fluidnc_client.requests") as req, \
+                patch("modules.connection.fluidnc_client.time.sleep"):
             req.get.return_value = _resp(json_data={"state": "Idle"})
             assert client.reachable() is True
             assert client.is_connected() is True
             req.get.side_effect = Exception("timeout")
             assert client.reachable() is False
             assert client.is_connected() is False
+
+    def test_reachable_retries_before_giving_up(self):
+        """A single failed status read is not fatal: reachable() retries a few
+        times (with backoff) and succeeds if a later probe answers."""
+        client = FluidNCClient("http://board")
+        with patch("modules.connection.fluidnc_client.requests") as req, \
+                patch("modules.connection.fluidnc_client.time.sleep") as sleep:
+            req.get.side_effect = [
+                Exception("busy"),
+                Exception("busy"),
+                _resp(json_data={"state": "Idle"}),
+            ]
+            assert client.reachable() is True
+            assert req.get.call_count == 3
+            assert sleep.call_count == 2  # backed off between the two failures
+
+    def test_reachable_stops_retrying_on_401(self):
+        """A 401 is definitive (locked) — no point burning retries on it."""
+        client = FluidNCClient("http://board")
+        locked = _resp(status=401)
+        locked.raise_for_status.side_effect = Exception("401 Unauthorized")
+        with patch("modules.connection.fluidnc_client.requests") as req, \
+                patch("modules.connection.fluidnc_client.time.sleep"):
+            req.get.return_value = locked
+            assert client.reachable() is False
+            assert client.locked is True
+            assert req.get.call_count == 1
 
     def test_upload_file_field_naming(self):
         """The multipart file part is named by the full SD path, plus a '<path>S' size field."""

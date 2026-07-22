@@ -217,6 +217,7 @@ class Backend(QObject):
         self._time_synced = False
         self._poll_inflight = False   # never stack polls on the busy board
         self._poll_failures = 0       # consecutive failures (see threshold)
+        self._last_status_ms = 0.0    # last /sand_status response time (backoff)
         self._discovered_tables = []  # [{name, url}] from the last mDNS browse
         self._table_name = ""         # firmware hostname from /sand_status
         self._table_password_b64 = "" # $Sand/Password, base64 like the backend
@@ -301,9 +302,13 @@ class Backend(QObject):
         if not self.client.base_url or self._poll_inflight:
             return
         self._poll_inflight = True
+        started = time.monotonic()
         try:
             data = await self.client.status()
         except Exception as exc:
+            # Timed out/failed — treat as a slow response for backoff purposes so
+            # a struggling board gets polled less, not hammered.
+            self._last_status_ms = (time.monotonic() - started) * 1000.0
             self._poll_failures += 1
             reason = str(exc) or type(exc).__name__
             # 401 = board is password-locked; deterministic, so say so
@@ -320,6 +325,7 @@ class Backend(QObject):
             return
         finally:
             self._poll_inflight = False
+        self._last_status_ms = (time.monotonic() - started) * 1000.0
         self._poll_failures = 0
         self._on_status(data)
 
@@ -406,12 +412,15 @@ class Backend(QObject):
         if isinstance(led, dict):
             self._ingest_led_status(led)
 
-        # Board-load backoff (see STATUS_POLL_LOWHEAP_MS): ease off only when the
-        # board signals heap pressure, regardless of what it's doing — the
-        # single-client server is only load-stressed when heap is tight.
+        # Board-load backoff (see STATUS_POLL_LOWHEAP_MS): ease off when the
+        # board signals heap pressure. PLUS slow-response backoff — if the last
+        # /sand_status took a while (a single-threaded board struggling
+        # mid-pattern), poll no faster than that response time so we give it room
+        # to recover instead of stacking polls against it.
         largest = status.get("heap_largest")
         heap_ok = not isinstance(largest, (int, float)) or largest >= self.HEAP_LARGEST_WARN
-        desired = self.STATUS_POLL_MS if heap_ok else self.STATUS_POLL_LOWHEAP_MS
+        base = self.STATUS_POLL_MS if heap_ok else self.STATUS_POLL_LOWHEAP_MS
+        desired = int(max(base, self._last_status_ms))
         if self._status_timer.isActive() and self._status_timer.interval() != desired:
             self._status_timer.setInterval(desired)
 

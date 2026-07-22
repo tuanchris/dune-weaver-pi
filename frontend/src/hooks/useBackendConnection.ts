@@ -25,6 +25,30 @@ export function useOnBackendConnected(callback: () => void) {
 }
 
 /**
+ * Hook that triggers a callback when the connected board's catalog
+ * (patterns/playlists) is re-synced by the backend — fired off the status
+ * stream's `catalog_version`. Use to refetch lists without a page reload.
+ */
+export function useOnCatalogChanged(callback: () => void) {
+  const callbackRef = useRef(callback)
+
+  useEffect(() => {
+    callbackRef.current = callback
+  }, [callback])
+
+  useEffect(() => {
+    const handleChanged = () => {
+      callbackRef.current()
+    }
+
+    window.addEventListener('catalog-changed', handleChanged)
+    return () => {
+      window.removeEventListener('catalog-changed', handleChanged)
+    }
+  }, [])
+}
+
+/**
  * Hook that returns a function wrapped to also be called on backend reconnection.
  * Automatically calls the function on mount and whenever backend reconnects.
  */

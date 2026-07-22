@@ -17,10 +17,10 @@ class TestListThetaRhoFiles:
 
     @pytest.mark.asyncio
     async def test_list_theta_rho_files(self, async_client):
-        """Test list_theta_rho_files returns list of pattern files."""
+        """The catalog is the connected board's manifest (board_catalog)."""
         mock_files = ["circle.thr", "spiral.thr", "custom/pattern.thr"]
 
-        with patch("main.pattern_manager.list_theta_rho_files", return_value=mock_files):
+        with patch("main.pattern_manager.board_catalog", return_value=mock_files):
             response = await async_client.get("/list_theta_rho_files")
 
         assert response.status_code == 200
@@ -33,8 +33,8 @@ class TestListThetaRhoFiles:
 
     @pytest.mark.asyncio
     async def test_list_theta_rho_files_empty(self, async_client):
-        """Test list_theta_rho_files returns empty list when no patterns."""
-        with patch("main.pattern_manager.list_theta_rho_files", return_value=[]):
+        """Empty when no board has been synced (no manifest cached)."""
+        with patch("main.pattern_manager.board_catalog", return_value=[]):
             response = await async_client.get("/list_theta_rho_files")
 
         assert response.status_code == 200
@@ -46,37 +46,26 @@ class TestListThetaRhoFilesWithMetadata:
     """Tests for /list_theta_rho_files_with_metadata endpoint."""
 
     @pytest.mark.asyncio
-    async def test_list_theta_rho_files_with_metadata(self, async_client, tmp_path):
-        """Test list_theta_rho_files_with_metadata returns files with metadata."""
+    async def test_list_theta_rho_files_with_metadata(self, async_client):
+        """Board catalog paths, metadata defaulting to 0 with no local cache."""
         mock_files = ["circle.thr"]
 
-        # The endpoint has two paths:
-        # 1. If metadata_cache.json exists, use it
-        # 2. Otherwise, use ThreadPoolExecutor with process_file
-        # We'll test the fallback path by having the cache file not exist
-
-        patterns_dir = tmp_path / "patterns"
-        patterns_dir.mkdir()
-        (patterns_dir / "circle.thr").write_text("0 0.5\n1 0.6")
-
-        with patch("main.pattern_manager.list_theta_rho_files", return_value=mock_files):
-            with patch("main.pattern_manager.THETA_RHO_DIR", str(patterns_dir)):
-                # Simulate cache file not existing
-                with patch("builtins.open", side_effect=FileNotFoundError):
-                    response = await async_client.get("/list_theta_rho_files_with_metadata")
+        with patch("main.pattern_manager.board_catalog", return_value=mock_files):
+            # No local metadata cache to join — coords/date default to 0.
+            with patch("builtins.open", side_effect=FileNotFoundError):
+                response = await async_client.get("/list_theta_rho_files_with_metadata")
 
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
         assert len(data) == 1
 
-        # The response structure has 'path', 'name', 'category', 'date_modified', 'coordinates_count'
         item = data[0]
         assert item["path"] == "circle.thr"
         assert item["name"] == "circle"
-        assert "category" in item
-        assert "date_modified" in item
-        assert "coordinates_count" in item
+        assert item["category"] == "root"
+        assert item["date_modified"] == 0
+        assert item["coordinates_count"] == 0
 
 
 class TestGetThetaRhoCoordinates:
@@ -94,11 +83,12 @@ class TestGetThetaRhoCoordinates:
         mock_coordinates = [(0.0, 0.5), (1.57, 0.8), (3.14, 0.3)]
 
         with patch("main.THETA_RHO_DIR", str(patterns_dir)):
-            with patch("main.parse_theta_rho_file", return_value=mock_coordinates):
-                response = await async_client.post(
-                    "/get_theta_rho_coordinates",
-                    json={"file_name": "test.thr"}
-                )
+            with patch("main.pattern_manager.resolve_local_path", return_value="test.thr"):
+                with patch("main.parse_theta_rho_file", return_value=mock_coordinates):
+                    response = await async_client.post(
+                        "/get_theta_rho_coordinates",
+                        json={"file_name": "test.thr"}
+                    )
 
         assert response.status_code == 200
         data = response.json()
@@ -133,25 +123,16 @@ class TestRunThetaRho:
     """Tests for /run_theta_rho endpoint."""
 
     @pytest.mark.asyncio
-    async def test_run_theta_rho_when_disconnected(self, async_client, mock_state, tmp_path):
-        """Test run_theta_rho fails gracefully when disconnected."""
-        # The endpoint checks file existence first, then connection
-        patterns_dir = tmp_path / "patterns"
-        patterns_dir.mkdir()
-        test_file = patterns_dir / "circle.thr"
-        test_file.write_text("0 0.5")
-
+    async def test_run_theta_rho_when_disconnected(self, async_client, mock_state):
+        """A board pattern with no connection fails on the connection check."""
         mock_state.conn = None
         mock_state.is_homing = False
 
         with patch("main.state", mock_state):
-            with patch("main.pattern_manager.THETA_RHO_DIR", str(patterns_dir)):
+            with patch("main.pattern_manager.is_on_board", return_value=True):
                 response = await async_client.post(
                     "/run_theta_rho",
-                    json={
-                        "file_name": "circle.thr",
-                        "pre_execution": "none"
-                    }
+                    json={"file_name": "circle.thr", "pre_execution": "none"},
                 )
 
         assert response.status_code == 400
@@ -159,25 +140,17 @@ class TestRunThetaRho:
         assert "not established" in data["detail"].lower() or "not connected" in data["detail"].lower()
 
     @pytest.mark.asyncio
-    async def test_run_theta_rho_during_homing(self, async_client, mock_state, tmp_path):
+    async def test_run_theta_rho_during_homing(self, async_client, mock_state):
         """Test run_theta_rho fails when homing is in progress."""
-        patterns_dir = tmp_path / "patterns"
-        patterns_dir.mkdir()
-        test_file = patterns_dir / "circle.thr"
-        test_file.write_text("0 0.5")
-
         mock_state.is_homing = True
         mock_state.conn = MagicMock()
         mock_state.conn.is_connected.return_value = True
 
         with patch("main.state", mock_state):
-            with patch("main.pattern_manager.THETA_RHO_DIR", str(patterns_dir)):
+            with patch("main.pattern_manager.is_on_board", return_value=True):
                 response = await async_client.post(
                     "/run_theta_rho",
-                    json={
-                        "file_name": "circle.thr",
-                        "pre_execution": "none"
-                    }
+                    json={"file_name": "circle.thr", "pre_execution": "none"},
                 )
 
         assert response.status_code == 409
@@ -185,28 +158,22 @@ class TestRunThetaRho:
         assert "homing" in data["detail"].lower()
 
     @pytest.mark.asyncio
-    async def test_run_theta_rho_file_not_found(self, async_client, mock_state, tmp_path):
-        """Test run_theta_rho returns 404 for non-existent file."""
-        patterns_dir = tmp_path / "patterns"
-        patterns_dir.mkdir()
-
+    async def test_run_theta_rho_not_on_board(self, async_client, mock_state):
+        """A pattern absent from the board's catalog returns 404."""
         mock_state.conn = MagicMock()
         mock_state.conn.is_connected.return_value = True
         mock_state.is_homing = False
 
         with patch("main.state", mock_state):
-            with patch("main.pattern_manager.THETA_RHO_DIR", str(patterns_dir)):
+            with patch("main.pattern_manager.is_on_board", return_value=False):
                 response = await async_client.post(
                     "/run_theta_rho",
-                    json={
-                        "file_name": "nonexistent.thr",
-                        "pre_execution": "none"
-                    }
+                    json={"file_name": "nonexistent.thr", "pre_execution": "none"},
                 )
 
         assert response.status_code == 404
         data = response.json()
-        assert "not found" in data["detail"].lower()
+        assert "board" in data["detail"].lower()
 
 
 class TestStopExecution:
