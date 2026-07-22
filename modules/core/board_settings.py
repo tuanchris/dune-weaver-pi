@@ -409,8 +409,8 @@ def adopt_board_playlists(conn=None) -> None:
             data = conn.fetch_file(f"/playlists/{fname}")
         except Exception:
             continue  # listed but unreadable (e.g. deleted mid-scan) — skip
-        files = [resolve_host_path(_from_playlist_sd_line(l))
-                 for l in data.decode("utf-8", "replace").splitlines() if l.strip()]
+        files = [resolve_host_path(_from_playlist_sd_line(line))
+                 for line in data.decode("utf-8", "replace").splitlines() if line.strip()]
         entry = playlists.get(name)
         current = entry.get("files", entry) if isinstance(entry, dict) else entry
         if current != files:
@@ -454,8 +454,9 @@ def push_custom_clears(conn=None) -> None:
     conn = conn or state.conn
     if not conn:
         return
-    from modules.core.pattern_manager import THETA_RHO_DIR
     import os
+
+    from modules.core.pattern_manager import THETA_RHO_DIR
     for board_name, custom in (
         ("clear_from_in.thr", state.custom_clear_from_in),
         ("clear_from_out.thr", state.custom_clear_from_out),

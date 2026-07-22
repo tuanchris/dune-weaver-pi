@@ -7,8 +7,9 @@ Tests the following endpoints:
 - POST /get_theta_rho_coordinates
 - POST /run_theta_rho (when disconnected)
 """
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
 
 
 class TestListThetaRhoFiles:

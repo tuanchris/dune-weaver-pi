@@ -235,8 +235,12 @@ async def start_playlist(playlist_name: str, run_mode: str = "single",
     """
     global current_run
     conn = _require_conn()
-    from modules.core import playlist_manager, board_settings
-    from modules.core.pattern_manager import THETA_RHO_DIR, _ensure_on_board, make_sd_path_resolver
+    from modules.core import board_settings, playlist_manager
+    from modules.core.pattern_manager import (
+        THETA_RHO_DIR,
+        _ensure_on_board,
+        make_sd_path_resolver,
+    )
 
     playlist = playlist_manager.get_playlist(playlist_name)
     if not playlist:

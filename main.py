@@ -1,39 +1,51 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect, Request
-from fastapi.responses import JSONResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
-from typing import List, Optional
-import os
-import logging
-from datetime import datetime
-from modules.connection import connection_manager
-from modules.core import pattern_manager
-from modules.core.pattern_manager import parse_theta_rho_file, THETA_RHO_DIR
-from modules.core import playlist_manager
-from modules.core import board_settings
-from modules.core import execution
-from modules.update import update_manager
-from modules.core.state import state
-from modules import mqtt
-import signal
 import asyncio
-from contextlib import asynccontextmanager
-from modules.led.led_interface import LEDInterface
-from modules.screen.screen_controller import ScreenController
-from modules.led.idle_timeout_manager import idle_timeout_manager
-from modules.core.cache_manager import get_cache_path, generate_image_preview, get_pattern_metadata
-from modules.core.version_manager import version_manager
-from modules.core.mdns_discovery import discovery as mdns_discovery
-from modules.core.log_handler import init_memory_handler, get_memory_handler
-from modules.wifi.router import router as wifi_router, captive_portal_router
-import json
 import base64
 import hashlib
-import time
+import json
+import logging
+import os
+import signal
 import subprocess
+import time
+from contextlib import asynccontextmanager
+from datetime import datetime
+from typing import List, Optional
+
 import requests
+from fastapi import (
+    FastAPI,
+    File,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
+
+from modules import mqtt
+from modules.connection import connection_manager
+from modules.core import board_settings, execution, pattern_manager, playlist_manager
+from modules.core.cache_manager import (
+    generate_image_preview,
+    get_cache_path,
+    get_pattern_metadata,
+)
+from modules.core.log_handler import get_memory_handler, init_memory_handler
+from modules.core.mdns_discovery import discovery as mdns_discovery
+from modules.core.pattern_manager import THETA_RHO_DIR, parse_theta_rho_file
+from modules.core.state import state
+from modules.core.version_manager import version_manager
+from modules.led.idle_timeout_manager import idle_timeout_manager
+from modules.led.led_interface import LEDInterface
+from modules.screen.screen_controller import ScreenController
+from modules.update import update_manager
+from modules.wifi.router import captive_portal_router
+from modules.wifi.router import router as wifi_router
 
 # Get log level from environment variable, default to INFO
 log_level_str = os.getenv('LOG_LEVEL', 'INFO').upper()
@@ -82,16 +94,16 @@ def normalize_file_path(file_path: str) -> str:
     """Normalize file path separators for consistent cross-platform handling."""
     if not file_path:
         return ''
-    
+
     # First normalize path separators
     normalized = file_path.replace('\\', '/')
-    
+
     # Remove only the patterns directory prefix from the beginning, not patterns within the path
     if normalized.startswith('./patterns/'):
         normalized = normalized[11:]
     elif normalized.startswith('patterns/'):
         normalized = normalized[9:]
-    
+
     return normalized
 
 @asynccontextmanager
@@ -190,14 +202,17 @@ async def lifespan(app: FastAPI):
         mqtt.init_mqtt()
     except Exception as e:
         logger.warning(f"Failed to initialize MQTT: {str(e)}")
-    
+
     # Schedule cache generation check for later (non-blocking startup)
     async def delayed_cache_check():
         """Check and generate cache in background."""
         try:
             logger.info("Starting cache check...")
 
-            from modules.core.cache_manager import is_cache_generation_needed_async, generate_cache_background
+            from modules.core.cache_manager import (
+                generate_cache_background,
+                is_cache_generation_needed_async,
+            )
 
             if await is_cache_generation_needed_async():
                 logger.info("Cache generation needed, starting background task...")
@@ -445,7 +460,7 @@ async def broadcast_status_update(status: dict):
             disconnected.add(websocket)
         except RuntimeError:
             disconnected.add(websocket)
-    
+
     active_status_connections.difference_update(disconnected)
 
 @app.websocket("/ws/cache-progress")
@@ -1668,31 +1683,32 @@ async def list_theta_rho_files():
 @app.get("/list_theta_rho_files_with_metadata")
 async def list_theta_rho_files_with_metadata():
     """Get list of theta-rho files with metadata for sorting and filtering.
-    
+
     Optimized to process files asynchronously and support request cancellation.
     """
-    from modules.core.cache_manager import get_pattern_metadata
     import asyncio
     from concurrent.futures import ThreadPoolExecutor
-    
+
+    from modules.core.cache_manager import get_pattern_metadata
+
     # Run the blocking file listing in a thread
     files = await asyncio.to_thread(pattern_manager.list_theta_rho_files)
     files_with_metadata = []
 
     # Use ThreadPoolExecutor for I/O-bound operations
     executor = ThreadPoolExecutor(max_workers=4)
-    
+
     def process_file(file_path):
         """Process a single file and return its metadata."""
         try:
             full_path = os.path.join(pattern_manager.THETA_RHO_DIR, file_path)
-            
+
             # Get file stats
             file_stat = os.stat(full_path)
-            
+
             # Get cached metadata (this should be fast if cached)
             metadata = get_pattern_metadata(file_path)
-            
+
             # Extract full folder path from file path
             path_parts = file_path.split('/')
             if len(path_parts) > 1:
@@ -1700,13 +1716,13 @@ async def list_theta_rho_files_with_metadata():
                 category = '/'.join(path_parts[:-1])
             else:
                 category = 'root'
-            
+
             # Get file name without extension
             file_name = os.path.splitext(os.path.basename(file_path))[0]
-            
+
             # Use modification time (mtime) for "date modified"
             date_modified = file_stat.st_mtime
-            
+
             return {
                 'path': file_path,
                 'name': file_name,
@@ -1714,7 +1730,7 @@ async def list_theta_rho_files_with_metadata():
                 'date_modified': date_modified,
                 'coordinates_count': metadata.get('total_coordinates', 0) if metadata else 0
             }
-            
+
         except Exception as e:
             logger.warning(f"Error getting metadata for {file_path}: {str(e)}")
             # Include file with minimal info if metadata fails
@@ -1730,7 +1746,7 @@ async def list_theta_rho_files_with_metadata():
                 'date_modified': 0,
                 'coordinates_count': 0
             }
-    
+
     # Load the entire metadata cache at once (async)
     # This is much faster than 1000+ individual metadata lookups
     try:
@@ -1809,11 +1825,11 @@ async def upload_theta_rho(file: UploadFile = File(...)):
         # Ensure custom_patterns directory exists
         custom_patterns_dir = os.path.join(pattern_manager.THETA_RHO_DIR, "custom_patterns")
         os.makedirs(custom_patterns_dir, exist_ok=True)
-        
+
         # Use forward slashes for internal path representation to maintain consistency
         file_path_in_patterns_dir = f"custom_patterns/{file.filename}"
         full_file_path = os.path.join(pattern_manager.THETA_RHO_DIR, file_path_in_patterns_dir)
-        
+
         # Save the uploaded file with proper encoding for Windows compatibility
         file_content = await file.read()
         try:
@@ -1825,9 +1841,9 @@ async def upload_theta_rho(file: UploadFile = File(...)):
             # If UTF-8 decoding fails, save as binary (fallback)
             with open(full_file_path, "wb") as f:
                 f.write(file_content)
-        
+
         logger.info(f"File {file.filename} saved successfully")
-        
+
         # Generate image preview for the new file with retry logic
         max_retries = 3
         for attempt in range(max_retries):
@@ -1845,7 +1861,7 @@ async def upload_theta_rho(file: UploadFile = File(...)):
                 logger.error(f"Error generating preview for {file_path_in_patterns_dir} (attempt {attempt + 1}): {str(e)}")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(0.5)  # Small delay before retry
-        
+
         return {"success": True, "message": f"File {file.filename} uploaded successfully"}
     except Exception as e:
         logger.error(f"Error uploading file: {str(e)}")
@@ -2105,7 +2121,7 @@ async def delete_theta_rho_file(request: DeleteFileRequest):
         # Delete the pattern file asynchronously
         await asyncio.to_thread(os.remove, file_path)
         logger.info(f"Successfully deleted theta-rho file: {request.file_name}")
-        
+
         # Clean up cached preview image and metadata asynchronously
         from modules.core.cache_manager import delete_pattern_cache
         cache_cleanup_success = await asyncio.to_thread(delete_pattern_cache, normalized_file_name)
@@ -2113,7 +2129,7 @@ async def delete_theta_rho_file(request: DeleteFileRequest):
             logger.info(f"Successfully cleaned up cache for {request.file_name}")
         else:
             logger.warning(f"Cache cleanup failed for {request.file_name}, but pattern was deleted")
-        
+
         return {"success": True, "cache_cleanup": cache_cleanup_success}
     except Exception as e:
         logger.error(f"Failed to delete theta-rho file {request.file_name}: {str(e)}")
@@ -2213,7 +2229,7 @@ async def preview_thr(request: DeleteFileRequest):
             coordinates = await asyncio.to_thread(parse_theta_rho_file, pattern_file_path)
             first_coord = coordinates[0] if coordinates else None
             last_coord = coordinates[-1] if coordinates else None
-            
+
             # Format coordinates as objects with x and y properties
             first_coord_obj = {"x": first_coord[0], "y": first_coord[1]} if first_coord else None
             last_coord_obj = {"x": last_coord[0], "y": last_coord[1]} if last_coord else None
@@ -2300,10 +2316,10 @@ async def serve_preview(encoded_filename: str):
     # Decode the filename by replacing -- with the original path separators
     # First try forward slash (most common case), then backslash if needed
     file_name = encoded_filename.replace('--', '/')
-    
+
     # Apply normalization to handle any remaining path prefixes
     file_name = normalize_file_path(file_name)
-    
+
     # Check if the decoded path exists, if not try backslash decoding
     cache_path = get_cache_path(file_name)
     if not os.path.exists(cache_path):
@@ -2318,14 +2334,14 @@ async def serve_preview(encoded_filename: str):
     if not os.path.exists(cache_path):
         logger.error(f"Preview image not found for {file_name}")
         raise HTTPException(status_code=404, detail="Preview image not found")
-    
+
     # Add caching headers
     headers = {
         "Cache-Control": "public, max-age=31536000",  # Cache for 1 year
         "Content-Type": "image/webp",
         "Accept-Ranges": "bytes"
     }
-    
+
     return FileResponse(
         cache_path,
         media_type="image/webp",
@@ -2535,7 +2551,7 @@ async def check_updates():
 async def update_software():
     logger.info("Starting software update process")
     success, error_message, error_log = update_manager.update_software()
-    
+
     if success:
         logger.info("Software update completed successfully")
         return {"success": True}
@@ -2659,7 +2675,7 @@ async def set_custom_clear_patterns(request: dict):
             state.custom_clear_from_in = request["custom_clear_from_in"]
         elif "custom_clear_from_in" in request:
             state.custom_clear_from_in = None
-            
+
         if "custom_clear_from_out" in request and request["custom_clear_from_out"]:
             pattern_path = os.path.join(pattern_manager.THETA_RHO_DIR, request["custom_clear_from_out"])
             if not os.path.exists(pattern_path):
@@ -2667,7 +2683,7 @@ async def set_custom_clear_patterns(request: dict):
             state.custom_clear_from_out = request["custom_clear_from_out"]
         elif "custom_clear_from_out" in request:
             state.custom_clear_from_out = None
-        
+
         state.save()
         # The firmware runs its own clear files; mirror the choice onto them.
         board_settings.push_custom_clears_async()
@@ -2700,14 +2716,14 @@ async def set_clear_pattern_speed(request: dict):
             speed = None
         else:
             speed = int(speed_value)
-        
+
         # Validate speed range (same as regular speed limits) only if speed is not None
         if speed is not None and not (50 <= speed <= 2000):
             raise HTTPException(status_code=400, detail="Speed must be between 50 and 2000")
-        
+
         state.clear_pattern_speed = speed
         state.save()
-        
+
         logger.info(f"Clear pattern speed set to {speed if speed is not None else 'default (state.speed)'}")
         return {
             "success": True,
@@ -2766,8 +2782,9 @@ def optimize_logo_image(content: bytes, original_ext: str) -> tuple[bytes, str]:
         return content, original_ext
 
     try:
-        from PIL import Image
         import io
+
+        from PIL import Image
 
         with Image.open(io.BytesIO(content)) as img:
             # Convert to RGBA for transparency support
@@ -3182,7 +3199,7 @@ async def test_mqtt_connection(request: dict):
 
 def _read_and_encode_preview(cache_path: str) -> str:
     """Read preview image from disk and encode as base64.
-    
+
     Combines file I/O and base64 encoding in a single function
     to be run in executor, reducing context switches.
     """

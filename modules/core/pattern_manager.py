@@ -6,18 +6,19 @@ runs patterns and playlists itself; this module only keeps the host-side
 pattern catalog, the board-SD mirroring helpers, the play-history log, and
 the Still Sands time-window math used by the WLED quiet-hours watcher.
 """
-import os
-from zoneinfo import ZoneInfo
-import time
-import logging
-from datetime import datetime, time as datetime_time
-from modules.connection import connection_manager
-from modules.core.state import state
-from math import pi
 import asyncio
 import json
-from modules.led.idle_timeout_manager import idle_timeout_manager
+import logging
+import os
+from datetime import datetime
+from datetime import time as datetime_time
+from math import pi
 from typing import Optional
+from zoneinfo import ZoneInfo
+
+from modules.connection import connection_manager
+from modules.core.state import state
+from modules.led.idle_timeout_manager import idle_timeout_manager
 
 # Configure logging
 logger = logging.getLogger(__name__)

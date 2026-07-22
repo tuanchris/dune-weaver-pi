@@ -1,8 +1,8 @@
 """Preview module for generating image previews of patterns."""
-import os
-import math
 import asyncio
 import logging
+import math
+import os
 from io import BytesIO
 
 logger = logging.getLogger(__name__)
@@ -12,15 +12,16 @@ def _generate_preview(pattern_file, format='WEBP'):
     """Generate preview for a pattern file, optimized for 300x300 view."""
     # Import dependencies in the worker process
     from PIL import Image, ImageDraw
-    from modules.core.pattern_manager import parse_theta_rho_file, THETA_RHO_DIR
-    
+
+    from modules.core.pattern_manager import THETA_RHO_DIR, parse_theta_rho_file
+
     file_path = os.path.join(THETA_RHO_DIR, pattern_file)
     coordinates = parse_theta_rho_file(file_path)
-    
+
     # Image generation parameters
     RENDER_SIZE = 2048  # Use 2048x2048 for high quality rendering
     DISPLAY_SIZE = 512  # Final display size
-    
+
     if not coordinates:
         # Create an image with "No pattern data" text
         img = Image.new('RGBA', (DISPLAY_SIZE, DISPLAY_SIZE), (255, 255, 255, 0))  # Transparent background
@@ -33,10 +34,10 @@ def _generate_preview(pattern_file, format='WEBP'):
             text_x = (DISPLAY_SIZE - text_width) / 2
             text_y = (DISPLAY_SIZE - text_height) / 2
         except Exception:
-            text_x = DISPLAY_SIZE / 4 
+            text_x = DISPLAY_SIZE / 4
             text_y = DISPLAY_SIZE / 2
         draw.text((text_x, text_y), text, fill="black")
-        
+
         img_byte_arr = BytesIO()
         img.save(img_byte_arr, format=format)
         img_byte_arr.seek(0)
@@ -45,11 +46,11 @@ def _generate_preview(pattern_file, format='WEBP'):
     # Create image and draw pattern
     img = Image.new('RGBA', (RENDER_SIZE, RENDER_SIZE), (255, 255, 255, 0))  # Transparent background
     draw = ImageDraw.Draw(img)
-    
+
     # Image drawing parameters
     CENTER = RENDER_SIZE / 2.0
-    SCALE_FACTOR = (RENDER_SIZE / 2.0) - 10.0 
-    LINE_COLOR = "black" 
+    SCALE_FACTOR = (RENDER_SIZE / 2.0) - 10.0
+    LINE_COLOR = "black"
     STROKE_WIDTH = 2  # Increased stroke width for better visibility after scaling
 
     points_to_draw = []
@@ -57,7 +58,7 @@ def _generate_preview(pattern_file, format='WEBP'):
         x = CENTER - rho * SCALE_FACTOR * math.cos(theta)
         y = CENTER - rho * SCALE_FACTOR * math.sin(theta)
         points_to_draw.append((x, y))
-    
+
     if len(points_to_draw) > 1:
         draw.line(points_to_draw, fill=LINE_COLOR, width=STROKE_WIDTH, joint="curve")
     elif len(points_to_draw) == 1:

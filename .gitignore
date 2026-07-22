@@ -16,7 +16,9 @@ tsconfig.json
 
 # Touch app config files
 dune-weaver-touch/*.json
+# uv items to ignore
 .venv/
+.uv/
 patterns/cached_svg/
 patterns/cached_images/custom_*
 # macOS files

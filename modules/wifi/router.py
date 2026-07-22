@@ -2,11 +2,12 @@
 FastAPI router for WiFi management endpoints.
 """
 
-from fastapi import APIRouter, HTTPException, Request
+import logging
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-from typing import Optional
-import logging
 
 from . import manager
 

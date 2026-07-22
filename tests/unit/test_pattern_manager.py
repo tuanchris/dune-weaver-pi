@@ -7,9 +7,9 @@ Tests the core pattern file operations:
 - Error handling for invalid files
 - Listing pattern files
 """
-import os
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 
 class TestParseTheTaRhoFile:

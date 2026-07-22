@@ -1,12 +1,10 @@
 # state.py
-import asyncio
-import threading
-import json
-import os
-import logging
-import uuid
 import base64
-from typing import Optional, Literal
+import json
+import logging
+import os
+import threading
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +23,7 @@ class AppState:
         self._speed = 100
         self._current_playlist = None
         self._current_playlist_name = None  # New variable for playlist name
-        
+
         # Regular state variables
         self.execution_progress = None  # (current, total, remaining, elapsed) mirror for MQTT
         self.current_theta = 0
@@ -111,7 +109,7 @@ class AppState:
         self._shuffle = False  # Shuffle playlist order
         self.custom_clear_from_in = None  # Custom clear from center pattern
         self.custom_clear_from_out = None  # Custom clear from perimeter pattern
-        
+
         # Application name setting
         self.app_name = "Dune Weaver"  # Default app name
 
@@ -126,7 +124,7 @@ class AppState:
         # Custom branding settings (filenames only, files stored in static/custom/)
         # Favicon is auto-generated from logo as logo-favicon.ico
         self.custom_logo = None  # Custom logo filename (e.g., "logo-abc123.png")
-        
+
         # Still Sands settings
         self.scheduled_pause_enabled = False
         self.scheduled_pause_time_slots = []  # List of time slot dictionaries
@@ -207,7 +205,7 @@ class AppState:
     @current_playlist.setter
     def current_playlist(self, value):
         self._current_playlist = value
-        
+
         # force an empty string (and not None) if we need to unset
         if value is None:
             value = ""
@@ -249,7 +247,7 @@ class AppState:
     @clear_pattern.setter
     def clear_pattern(self, value):
         self._clear_pattern = value
-        
+
     @property
     def clear_pattern_speed(self):
         return self._clear_pattern_speed

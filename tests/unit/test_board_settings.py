@@ -8,8 +8,9 @@ Covers:
 - Autostart mapping to $Playlist/Autostart* commands
 - Playlist mirroring content
 """
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from modules.core import board_settings
 from modules.core.state import state
